@@ -1,0 +1,87 @@
+name: 'Dart Cognitive Complexity Audit'
+description: 'Deterministic Cognitive Complexity calculator and Git diff regression scanner for Dart and Flutter repositories.'
+author: 'kevmoo'
+
+branding:
+  icon: 'trending-up'
+  color: 'blue'
+
+inputs:
+  targets:
+    description: 'Space-separated list of target files or directories to analyze.'
+    required: false
+    default: 'lib'
+  threshold:
+    description: 'Minimum complexity score to display in reports.'
+    required: false
+    default: '0'
+  fail-threshold:
+    description: 'Exit with non-zero status if any function score exceeds this ceiling.'
+    required: false
+    default: '15'
+  diff-base:
+    description: 'Git ref (e.g. origin/main) to compare against. Auto-detects PR base by default.'
+    required: false
+    default: ''
+  fail-on-increase:
+    description: 'Exit with non-zero status if any function increased in complexity over diff-base.'
+    required: false
+    default: 'false'
+  format:
+    description: 'Output format: github (summary table + annotations), text, or json.'
+    required: false
+    default: 'github'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Resolve Diff Base & Fetch History
+      id: prepare
+      shell: bash
+      env:
+        INPUT_DIFF_BASE: ${{ inputs.diff-base }}
+        EVENT_NAME: ${{ github.event_name }}
+        BASE_REF: ${{ github.base_ref }}
+      run: |
+        diff_arg=""
+        base="$INPUT_DIFF_BASE"
+        if [ -z "$base" ]; then
+          if [ "$EVENT_NAME" = "pull_request" ] || [ "$EVENT_NAME" = "pull_request_target" ]; then
+            base="origin/$BASE_REF"
+          fi
+        fi
+        if [ -n "$base" ]; then
+          echo "Fetching Git object history for diff base $base..."
+          git fetch origin "${base#origin/}" 2>/dev/null || true
+          diff_arg="--git-diff=$base"
+        fi
+        echo "diff_arg=$diff_arg" >> "$GITHUB_OUTPUT"
+
+    - name: Execute Cognitive Complexity Scanner
+      shell: bash
+      env:
+        INPUT_THRESHOLD: ${{ inputs.threshold }}
+        INPUT_FAIL_THRESHOLD: ${{ inputs.fail-threshold }}
+        INPUT_FAIL_ON_INCREASE: ${{ inputs.fail-on-increase }}
+        INPUT_FORMAT: ${{ inputs.format }}
+        INPUT_TARGETS: ${{ inputs.targets }}
+        DIFF_ARG: ${{ steps.prepare.outputs.diff_arg }}
+        ACTION_PATH: ${{ github.action_path }}
+      run: |
+        fail_inc_arg=""
+        if [ "$INPUT_FAIL_ON_INCREASE" = "true" ]; then
+          fail_inc_arg="--fail-on-increase"
+        fi
+        
+        # Navigate to action repo directory, run pub get to resolve dependencies deterministically
+        cd "$ACTION_PATH"
+        dart pub get >/dev/null
+        
+        # Execute the scanner CLI tool
+        dart run bin/cognitive_complexity.dart \
+          --threshold="$INPUT_THRESHOLD" \
+          --fail-threshold="$INPUT_FAIL_THRESHOLD" \
+          --format="$INPUT_FORMAT" \
+          $DIFF_ARG \
+          $fail_inc_arg \
+          $INPUT_TARGETS
