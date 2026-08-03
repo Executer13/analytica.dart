@@ -1,5 +1,3 @@
-# Cognitive Complexity Calculator
-
 A deterministic, zero-token Cognitive Complexity calculation library, CLI
 tool, and GitHub Action for Dart and Flutter repositories.
 
@@ -25,10 +23,40 @@ Campbell.
 
 ## 💻 CLI Usage
 
-Run the scanner locally in your project root:
+You can run the scanner on-demand without installation, locally inside a project, or globally.
+
+### On-Demand (Recommended)
+
+Run the scanner directly in any Dart or Flutter project root using the Dart SDK:
+
+```bash
+dart run cognitive_complexity@ [options] [targets]
+```
+
+*(Note: The trailing `@` instructs the Dart VM to resolve and execute the latest published version of the package on-demand).*
+
+### Project Dependency
+
+Add the package to your `dev_dependencies` in `pubspec.yaml`:
+
+```yaml
+dev_dependencies:
+  cognitive_complexity: ^0.1.0
+```
+
+And run:
 
 ```bash
 dart run cognitive_complexity [options] [targets]
+```
+
+### Global Installation
+
+To install the scanner globally on your system:
+
+```bash
+dart install cognitive_complexity
+cognitive_complexity [options] [targets]
 ```
 
 ### Options
@@ -96,9 +124,12 @@ on:
 jobs:
   audit:
     runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write # Required to post/update sticky PR comments
+      contents: read       # Required for actions/checkout
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           # Fetch full history so merge-base comparison can locate common ancestor
           fetch-depth: 0
@@ -124,3 +155,18 @@ jobs:
   to compare full repository files.
 * `fail-on-increase`: Set `true` to block PR merge if complexity increases.
 * `format`: Summary format: `github` (GHA annotations + summary), `text`, or `json`.
+
+### Permissions & Security
+
+By default, GitHub Actions runs with read-only permissions. To enable posting and updating the sticky PR comment summary directly on the PR thread, you must explicitly grant write permissions to `pull-requests`:
+
+```yaml
+permissions:
+  pull-requests: write
+  contents: read
+```
+
+If write permissions are not granted, the scanner will execute normally, and output annotations and step summaries, but will skip posting the PR comment without failing the build.
+
+#### Fork PR Security Note
+Workflows triggered by pull requests from external forks are executed with restricted read-only permissions by GitHub. For security reasons, the action will gracefully skip posting PR comments on forks to prevent Remote Code Execution (RCE) risks, while still validating code complexity in GHA annotations and build status.
