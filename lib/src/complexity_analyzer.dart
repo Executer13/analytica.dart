@@ -132,23 +132,51 @@ class _DeclarationFinder extends RecursiveAstVisitor<void> {
 
   _DeclarationFinder({required this.filePath, required this.lineInfo});
 
+  static String? _getDeclarationName(AstNode decl) {
+    if (decl is ClassDeclaration) {
+      return decl.namePart.typeName.lexeme;
+    }
+    if (decl is EnumDeclaration) {
+      return decl.namePart.typeName.lexeme;
+    }
+    if (decl is MixinDeclaration) {
+      return decl.name.lexeme;
+    }
+    if (decl is ExtensionDeclaration) {
+      return decl.name?.lexeme ?? '<unnamed extension>';
+    }
+    if (decl is ExtensionTypeDeclaration) {
+      final d = decl as dynamic;
+      try {
+        // ignore: avoid_dynamic_calls
+        final namePart = d.namePart;
+        if (namePart != null) {
+          // ignore: avoid_dynamic_calls
+          return namePart.typeName.lexeme as String;
+        }
+      } catch (_) {}
+
+      try {
+        // ignore: avoid_dynamic_calls
+        final pc = d.primaryConstructor;
+        if (pc != null) {
+          // ignore: avoid_dynamic_calls
+          return pc.beginToken.lexeme as String;
+        }
+      } catch (_) {}
+    }
+    return null;
+  }
+
   String? _getEnclosingName(AstNode node) {
     var current = node.parent;
     while (current != null) {
-      if (current is ClassDeclaration) {
-        return current.namePart.typeName.lexeme;
-      }
-      if (current is EnumDeclaration) {
-        return current.namePart.typeName.lexeme;
-      }
-      if (current is MixinDeclaration) {
-        return current.name.lexeme;
-      }
-      if (current is ExtensionTypeDeclaration) {
-        return current.namePart.typeName.lexeme;
-      }
-      if (current is ExtensionDeclaration) {
-        return current.name?.lexeme ?? '<unnamed extension>';
+      if (current is ClassDeclaration ||
+          current is EnumDeclaration ||
+          current is MixinDeclaration ||
+          current is ExtensionTypeDeclaration ||
+          current is ExtensionDeclaration) {
+        return _getDeclarationName(current);
       }
       current = current.parent;
     }
