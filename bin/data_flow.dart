@@ -1,6 +1,5 @@
 import 'dart:io';
-
-import 'package:cognitive_complexity/src/complexity/cli.dart';
+import 'package:cognitive_complexity/src/data_flow/cli.dart';
 import 'package:stack_trace/stack_trace.dart';
 
 void main(List<String> args) {
