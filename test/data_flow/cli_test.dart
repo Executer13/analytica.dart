@@ -1,13 +1,19 @@
 import 'dart:convert';
+import 'dart:io';
+
 import 'package:checks/checks.dart';
+import 'package:path/path.dart' as p;
 import 'package:test/scaffolding.dart';
 import 'package:test_descriptor/test_descriptor.dart' as d;
 import 'package:test_process/test_process.dart';
 
 void main() {
+  // Pin subprocesses to the SDK running the tests rather than PATH's `dart`.
+  final dartExe = Platform.resolvedExecutable;
+
   group('DataFlow CLI Integration', () {
     test('Displays usage help and exits with code 0 on --help', () async {
-      final proc = await TestProcess.start('dart', [
+      final proc = await TestProcess.start(dartExe, [
         'run',
         'bin/data_flow.dart',
         '--help',
@@ -22,7 +28,7 @@ void main() {
     });
 
     test('Exits with code 64 when no target file is provided', () async {
-      final proc = await TestProcess.start('dart', [
+      final proc = await TestProcess.start(dartExe, [
         'run',
         'bin/data_flow.dart',
       ]);
@@ -47,7 +53,7 @@ void runFlow(String token) {
 '''),
       ]).create();
 
-      final proc = await TestProcess.start('dart', [
+      final proc = await TestProcess.start(dartExe, [
         'run',
         'bin/data_flow.dart',
         '${d.sandbox}/project/sample.dart:4-6',
@@ -80,7 +86,7 @@ void process(int a, int b) {
 '''),
         ]).create();
 
-        final proc = await TestProcess.start('dart', [
+        final proc = await TestProcess.start(dartExe, [
           'run',
           'bin/data_flow.dart',
           '--format=text',
@@ -117,7 +123,7 @@ void process(int a) {
 
       // Test with drive-like prefix pattern
       final samplePath = '${d.sandbox}/project3/sample3.dart';
-      final proc = await TestProcess.start('dart', [
+      final proc = await TestProcess.start(dartExe, [
         'run',
         'bin/data_flow.dart',
         '$samplePath:3-4',
@@ -130,6 +136,67 @@ void process(int a) {
       check(jsonMap['enclosing']).equals('process');
       check(jsonMap['startLine']).equals(3);
       check(jsonMap['endLine']).equals(4);
+    });
+  });
+
+  group('SDK path resolution', () {
+    test('Documents --sdk-path and DART_SDK in help text', () async {
+      final proc = await TestProcess.start(dartExe, [
+        'run',
+        'bin/data_flow.dart',
+        '--help',
+      ]);
+
+      final stdout = await proc.stdoutStream().join('\n');
+      await proc.shouldExit(0);
+
+      check(stdout).contains('--sdk-path');
+      check(stdout).contains('DART_SDK');
+    });
+
+    test('Exits with config error for an invalid --sdk-path', () async {
+      await d.dir('proj', [d.file('sample.dart', 'void main() {}\n')]).create();
+
+      final proc = await TestProcess.start(dartExe, [
+        'run',
+        'bin/data_flow.dart',
+        '--sdk-path',
+        '${d.sandbox}/proj',
+        '${d.sandbox}/proj/sample.dart:1-1',
+      ]);
+
+      final stderr = await proc.stderrStream().join('\n');
+      await proc.shouldExit(78);
+
+      check(stderr).contains('does not point to a valid Dart SDK root');
+    });
+
+    test('Analyzes successfully with an explicit valid --sdk-path', () async {
+      await d.dir('proj2', [
+        d.file('sample.dart', '''
+void process(int a) {
+  // Line 3
+  final b = a * 10;
+  print(b);
+}
+'''),
+      ]).create();
+
+      final sdkRoot = p.dirname(p.dirname(Platform.resolvedExecutable));
+      final proc = await TestProcess.start(dartExe, [
+        'run',
+        'bin/data_flow.dart',
+        '--sdk-path',
+        sdkRoot,
+        '${d.sandbox}/proj2/sample.dart:3-3',
+      ]);
+
+      final stdout = await proc.stdoutStream().join('\n');
+      await proc.shouldExit(0);
+
+      final jsonMap = jsonDecode(stdout) as Map<String, dynamic>;
+      check(jsonMap['enclosing']).equals('process');
+      check(jsonMap['isCleanlyExtractable']).equals(true);
     });
   });
 }
