@@ -392,6 +392,117 @@ T process<T extends num>(T item) {
       check(result.suggestedSignature).contains('<T extends num>');
     });
 
+    test('Loop-carried read makes a mutated variable a live output', () async {
+      const code = '''
+void tally(List<int> items) {
+  var total = 0;
+  for (var i = 0; i < items.length; i++) {
+    print(total);
+    // Target: Line 6
+    total = total + items[i];
+  }
+}
+''';
+      final result = await analyzer.analyzeSource(
+        sourceCode: code,
+        startLine: 6,
+        endLine: 6,
+      );
+      // total flows around the loop back edge into print(total) and the
+      // slice's own read; extracting with a void signature would lose it.
+      check(result.outputs.map((o) => o.name).toList()).deepEquals(['total']);
+      check(
+        result.suggestedSignature,
+      ).equals('int _extracted(int total, List<int> items, int i)');
+    });
+
+    test(
+      'Mutated variable never read in the loop is not a live output',
+      () async {
+        const code = '''
+void reset(List<int> items) {
+  var flag = 0;
+  for (var i = 0; i < items.length; i++) {
+    // Target: Line 5
+    flag = i;
+  }
+}
+''';
+        final result = await analyzer.analyzeSource(
+          sourceCode: code,
+          startLine: 5,
+          endLine: 5,
+        );
+        check(result.outputs).isEmpty();
+      },
+    );
+
+    test('Variable re-declared each iteration is not loop-carried', () async {
+      const code = '''
+void perItem(List<int> items) {
+  for (final item in items) {
+    var acc = 0;
+    print(acc);
+    // Target: Line 6
+    acc = item * 2;
+  }
+}
+''';
+      final result = await analyzer.analyzeSource(
+        sourceCode: code,
+        startLine: 6,
+        endLine: 6,
+      );
+      // acc is re-initialized every iteration, so the slice's write never
+      // survives the back edge.
+      check(result.outputs).isEmpty();
+    });
+
+    test(
+      'C-style loop header variable mutated in slice is loop-carried',
+      () async {
+        const code = '''
+void skipper(List<int> items) {
+  for (var i = 0; i < items.length; i++) {
+    // Target: Line 4
+    i += items[i];
+  }
+}
+''';
+        final result = await analyzer.analyzeSource(
+          sourceCode: code,
+          startLine: 4,
+          endLine: 4,
+        );
+        // The write to i feeds the loop condition and updater via the back
+        // edge; a void extraction would loop forever.
+        check(result.outputs.map((o) => o.name).toList()).deepEquals(['i']);
+        check(
+          result.suggestedSignature,
+        ).equals('int _extracted(int i, List<int> items)');
+      },
+    );
+
+    test('for-in loop variable mutated in slice is not loop-carried', () async {
+      const code = '''
+void rewrite(List<int> items) {
+  for (var item in items) {
+    print(item);
+    // Target: Line 5
+    item = item * 2;
+  }
+}
+''';
+      final result = await analyzer.analyzeSource(
+        sourceCode: code,
+        startLine: 5,
+        endLine: 5,
+      );
+      // item is re-bound from the iterator every iteration, so the slice's
+      // write never survives the back edge.
+      check(result.outputs).isEmpty();
+    });
+
     test('VULN-10: Pattern variable declarations', () async {
       const code = '''
 void testMethod(List<int> list) {

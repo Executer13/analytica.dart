@@ -152,6 +152,11 @@ class DataFlowAnalyzer {
       lineInfo: lineInfo,
       internalDeclarations: inBlockVisitor.internalDeclarations,
       mutations: inBlockVisitor.mutations,
+      enclosingLoopSpans: _collectEnclosingLoopSpans(
+        enclosingNode,
+        startOffset,
+        endOffset,
+      ),
     );
     enclosingNode.accept(postBlockVisitor);
 
@@ -211,6 +216,16 @@ class DataFlowAnalyzer {
     return typeParams;
   }
 
+  List<({int offset, int end, int carryBoundary})> _collectEnclosingLoopSpans(
+    AstNode enclosingNode,
+    int sliceStartOffset,
+    int sliceEndOffset,
+  ) {
+    final collector = _EnclosingLoopCollector(sliceStartOffset, sliceEndOffset);
+    enclosingNode.accept(collector);
+    return collector.spans;
+  }
+
   String _getDeclarationName(AstNode node) {
     if (node is FunctionDeclaration) {
       return node.name.lexeme;
@@ -222,6 +237,52 @@ class DataFlowAnalyzer {
       return node.name?.lexeme ?? 'new';
     }
     return 'unknown';
+  }
+}
+
+/// Collects the source spans of loops that strictly enclose the slice; loops
+/// contained in (or identical to) the slice have their back edge extracted
+/// along with it and carry no liveness outside the slice.
+class _EnclosingLoopCollector extends RecursiveAstVisitor<void> {
+  final int sliceStartOffset;
+  final int sliceEndOffset;
+  final List<({int offset, int end, int carryBoundary})> spans = [];
+
+  _EnclosingLoopCollector(this.sliceStartOffset, this.sliceEndOffset);
+
+  void _addIfEnclosing(AstNode node, int carryBoundary) {
+    if (node.offset < sliceStartOffset && node.end > sliceEndOffset) {
+      spans.add((
+        offset: node.offset,
+        end: node.end,
+        carryBoundary: carryBoundary,
+      ));
+    }
+  }
+
+  @override
+  void visitForStatement(ForStatement node) {
+    // A C-style header declaration (`for (var i = 0; ...)`) carries its value
+    // across iterations via the condition and updaters, so it sits inside the
+    // carry boundary. A for-in variable is re-bound from the iterator every
+    // iteration and cannot carry a slice write backwards.
+    final boundary = node.forLoopParts is ForParts
+        ? node.body.offset
+        : node.offset;
+    _addIfEnclosing(node, boundary);
+    super.visitForStatement(node);
+  }
+
+  @override
+  void visitWhileStatement(WhileStatement node) {
+    _addIfEnclosing(node, node.offset);
+    super.visitWhileStatement(node);
+  }
+
+  @override
+  void visitDoStatement(DoStatement node) {
+    _addIfEnclosing(node, node.offset);
+    super.visitDoStatement(node);
   }
 }
 
