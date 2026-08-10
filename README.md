@@ -74,7 +74,7 @@ Add the package to your `dev_dependencies` in `pubspec.yaml`:
 
 ```yaml
 dev_dependencies:
-  cognitive_complexity: ^0.2.0
+  cognitive_complexity: ^0.2.2
 ```
 
 And run:
@@ -112,7 +112,7 @@ Exposes programmatic analyzers for Dart and Flutter applications.
 Add to `pubspec.yaml`:
 ```yaml
 dependencies:
-  cognitive_complexity: ^0.2.0
+  cognitive_complexity: ^0.2.2
 ```
 
 ### Programmatic Scan Example
@@ -156,6 +156,17 @@ dart run cognitive_complexity:data_flow --format=text lib/src/my_file.dart:45-80
 
 # Specify proposed helper method name
 dart run cognitive_complexity:data_flow --name=_processItem lib/src/my_file.dart:45-80
+```
+
+Like the scanner, it also runs on-demand without a project dependency, and
+`dart install cognitive_complexity` puts a `data_flow` executable on your PATH:
+
+```bash
+# On-demand (resolves the latest published version)
+dart run cognitive_complexity:data_flow@ lib/src/my_file.dart:45-80
+
+# After global installation
+data_flow lib/src/my_file.dart:45-80
 ```
 
 ### Programmatic Data-Flow API
