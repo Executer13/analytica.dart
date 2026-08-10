@@ -10,7 +10,7 @@ description: >-
 license: Apache-2.0
 key_features:
   - Automated CLI evaluation
-  - 3-tier execution scope matrix
+  - Scoped execution matrix (targeted / delta / full)
   - Interactive refactoring triage
   - Dart 3 pattern matching refactorings
 ---
@@ -48,7 +48,7 @@ complexity scores deterministically without LLM arithmetic or AST interpretation
 
 Select the execution scope based on the user's task instructions:
 
-### Tier 1: Targeted Scope (Specific File, Directory, or Class)
+### Scope 1: Targeted (Specific File, Directory, or Class)
 When the user references a discrete component (e.g., "check complexity in
 `lib/src/auth/`" or "audit `order_service.dart`"), pass explicit targets:
 
@@ -56,7 +56,7 @@ When the user references a discrete component (e.g., "check complexity in
 dart run cognitive_complexity@ --threshold 15 lib/src/auth/
 ```
 
-### Tier 2: Delta Scope (Pull Request, Branch, or Pre-flight Audit)
+### Scope 2: Delta (Pull Request, Branch, or Pre-flight Audit)
 When reviewing a feature branch, active commit stack, or PR, avoid full-project
 scanning. Isolate evaluation strictly to modified declarations against trunk:
 
@@ -64,7 +64,7 @@ scanning. Isolate evaluation strictly to modified declarations against trunk:
 dart run cognitive_complexity@ --git-diff origin/main --fail-on-increase
 ```
 
-### Tier 3: Whole-Project Scope (Default Naked Invocation)
+### Scope 3: Whole-Project (Default Naked Invocation)
 When invoked without targeting parameters ("scan my project for complexity" or
 `/cognitive-complexity`), audit the standard source and test roots:
 
@@ -106,7 +106,7 @@ Output a ranked Markdown **Complexity Triage Report** directly in chat (or to an
 artifact for extensive findings) containing:
 * Flagged function name and clickable file local path.
 * Current complexity score versus operational ceiling.
-* Recommended refactoring strategy (Pattern A, B, or C) and unit test status.
+* Recommended refactoring strategy (Pattern A, B, D, or a Pattern C tier) and unit test status.
 
 ### Stage 2: Interactive User Selection (Confirmation Gate)
 Pause execution and prompt the user (via interactive choice or chat) to select
@@ -140,7 +140,7 @@ verification baseline:
    flagged function is inadequate, pause execution and explicitly warn the user:
    > ⚠️ **Low Test Coverage Warning**: Function `<name>` in `<path>` lacks unit
    > test coverage. Structural refactoring risks silent behavioral regression.
-   
+
    Offer clear remediation paths:
    1. **(Recommended)** Write unit tests to lock in baseline behavior first.
    2. Proceed with structural refactoring and verify functionality manually.
@@ -229,27 +229,82 @@ Future<void> syncPayload(User? user, Payload? data) async {
 
 ---
 
-### Pattern C: Encapsulated Method Object Extraction
+### Pattern C: The 3-Tier Decomposition Rubric (Anti-Goodhart)
 
-When a monolithic function contains dense closures capturing heavy local variable
-state that prevents simple function extraction, migrate the function body into a
-dedicated private runner class. Promoting local variables to class instance fields
-collapses closure nesting penalties and unlocks focused helper method
-decomposition.
+**Anti-Goodhart Guardrail**: Do NOT blindly wrap monolithic functions in single-use runner classes with mutable instance variables just to bring scores below 15. Reducing the metric must never sacrifice transparent data flow or hide bugs.
 
-> **Companion Skill Hint**: If the **`encapsulated-method-object`** companion skill
-> is installed in your agent runtime, load and follow its instructions for
-> class-based encapsulation (it includes explicit overuse guardrails against
-> applying runner classes to stateless or sequential methods). Otherwise, execute
-> the standard refactoring workflow below.
+#### Deterministic Tier Selection via `data_flow`
 
-#### Refactoring Workflow
-1. Create a private class (e.g., `_PayloadProcessor`) accepting required state
-   through its constructor.
-2. Store mutable local variables as instance fields on the private class.
-3. Replace the original monolithic function body with a single instantiation and
-   method invocation on the runner object (`_PayloadProcessor(args).execute()`).
-4. Deconstruct the inner execution body into small, focused instance methods.
+Do not eyeball which tier a candidate slice belongs to. Run the companion
+statement-level data-flow analyzer (on-demand form; same SDK 3.12.0+
+requirement as the scanner) on each line slice you intend to extract:
+
+```bash
+dart run cognitive_complexity:data_flow@ lib/src/my_file.dart:45-80
+```
+
+Its report (`inputs`, `mutations`, live `outputs`, control-flow escapes, and
+a synthesized Dart 3 record signature) selects the tier. These bullets are
+the ONLY selection rules:
+
+* **Cleanly extractable, ≤ 1 live output, ≤ 3 inputs** → Tier 2: extract a
+  standard private helper returning that value.
+* **Cleanly extractable, 2–3 live outputs** → Tier 1: extract a static or
+  top-level function and use the synthesized record signature verbatim.
+* **4+ live outputs** → Tier 1 with a dedicated `Result` dataclass instead of
+  a wide record.
+* **Control-flow escapes** → not extractable as-is. For `return`, `break`,
+  or `continue` targeting outer scopes, restructure with guard clauses
+  (Pattern B) and re-run the analysis. For `yield`, restructure the
+  generator before attempting any extraction.
+* **Tier 3 gate (mutation-web check)** → Tier 3 requires recorded evidence,
+  not judgment. Run `data_flow` on at least two distinct candidate slices of
+  the function. Tier 3 is permitted ONLY if the intersection of their
+  `mutations` variable names contains 3 or more entries — i.e. the same
+  mutable variables thread through every candidate extraction. Paste the
+  JSON reports into the Triage Report as evidence; without that evidence,
+  stay in Tier 1/2.
+
+When choosing how to reduce complexity on a large Dart function, follow this **3-Tier Decision Hierarchy**:
+
+1. **Tier 1 — Pure Functional Decomposition (first choice)**: static or
+   top-level functions returning Dart 3 records
+   (`final (:data, :errors) = _stepOne(input);`), or a dedicated `Result` /
+   `Response` dataclass when the selection rules mandate one.
+2. **Tier 2 — Standard Extract Method (second choice)**: standard private
+   helper methods taking <= 3 arguments.
+3. **Tier 3 — Encapsulated Method Object (last resort)**: permitted only
+   when the mutation-web check above passes with recorded evidence. Then
+   read [references/method-object.md](references/method-object.md) for the
+   extraction mechanics and mandatory idioms. Do not load or apply it
+   speculatively.
+
+---
+
+### Pattern D: Fast-Fail Type Matching & Silent Data Swallowing
+
+When refactoring loops and type checks to reduce branching, **never** replace explicit type casts with pattern matching that silently drops data.
+
+**Flawed Structure (Silent Failure):**
+```dart
+for (final raw in rawTasks) {
+  // SILENTLY DROPS malformed data if raw is not a Map
+  if (raw case final Map<String, dynamic> taskMap) {
+    _applyTask(taskMap);
+  }
+}
+```
+
+**Correct Structure (Fast-Fail Preservation):**
+```dart
+for (final raw in rawTasks) {
+  if (raw is! Map<String, dynamic>) {
+    errors.add('Malformed task item (expected Map, got ${raw.runtimeType}): $raw');
+    continue;
+  }
+  _applyTask(raw);
+}
+```
 
 ---
 
@@ -257,8 +312,10 @@ decomposition.
 
 Run these verification commands before committing refactored code:
 
-1. **Complexity Audit**: Run `dart run cognitive_complexity@ --fail-threshold 15`
-   to verify zero declarations exceed operational ceilings.
+1. **Complexity Audit**: Run `dart run cognitive_complexity@
+   --fail-threshold 15 <refactored files>` scoped to the files you touched.
+   Pre-existing breaches elsewhere in the project do not invalidate the
+   refactor.
 2. **Code Presentation**: Run `dart format .` to maintain uniform syntactic
    styling.
 3. **Static Analysis**: Run `dart analyze` to ensure zero static warnings, lint
