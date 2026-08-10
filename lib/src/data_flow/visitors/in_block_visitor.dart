@@ -1,4 +1,5 @@
 import 'package:analyzer/dart/ast/ast.dart';
+import 'package:analyzer/dart/ast/token.dart';
 import 'package:analyzer/dart/ast/visitor.dart';
 import 'package:analyzer/dart/element/element.dart';
 import 'package:analyzer/source/line_info.dart';
@@ -36,6 +37,22 @@ class InBlockVisitor extends RecursiveAstVisitor<void> {
       node.offset >= sliceStartOffset && node.end <= sliceEndOffset;
 
   @override
+  void visitReturnStatement(ReturnStatement node) {
+    if (_isWithinSlice(node)) {
+      if (!_isInsideNestedFunction(node)) {
+        escapes.add(
+          ControlFlowEscape(
+            type: ControlFlowEscapeType.earlyReturn,
+            line: lineInfo.getLocation(node.offset).lineNumber,
+            description: 'Early return statement alters caller control flow',
+          ),
+        );
+      }
+    }
+    super.visitReturnStatement(node);
+  }
+
+  @override
   void visitAwaitExpression(AwaitExpression node) {
     if (_isWithinSlice(node)) {
       hasAwait = true;
@@ -52,6 +69,58 @@ class InBlockVisitor extends RecursiveAstVisitor<void> {
       }
     }
     super.visitVariableDeclaration(node);
+  }
+
+  @override
+  void visitDeclaredVariablePattern(DeclaredVariablePattern node) {
+    if (_isWithinSlice(node)) {
+      final element = node.declaredFragment?.element;
+      if (element != null) {
+        internalDeclarations.add(element);
+      }
+    }
+    super.visitDeclaredVariablePattern(node);
+  }
+
+  @override
+  void visitAssignedVariablePattern(AssignedVariablePattern node) {
+    if (_isWithinSlice(node)) {
+      final element = node.element;
+      if (element is VariableElement &&
+          element is! FieldElement &&
+          element is! TopLevelVariableElement &&
+          element is! PropertyInducingElement) {
+        final declOffset = _resolveOffset(element);
+        final isDeclaredInsideSlice =
+            (declOffset >= sliceStartOffset && declOffset <= sliceEndOffset) ||
+            internalDeclarations.contains(element);
+
+        if (!isDeclaredInsideSlice && declOffset < sliceStartOffset) {
+          final currentLine = lineInfo.getLocation(node.offset).lineNumber;
+          final declLine = declOffset >= 0
+              ? lineInfo.getLocation(declOffset).lineNumber
+              : currentLine;
+          final typeName = _resolveTypeName(element);
+
+          _addClosureEscapeIfRequired(
+            node,
+            currentLine,
+            element.name ?? node.name.lexeme,
+          );
+
+          mutations[element] = VariableUsage(
+            name: element.name ?? node.name.lexeme,
+            type: typeName,
+            isMutated: true,
+            declarationOffset: declOffset,
+            declarationLine: declLine,
+            firstMutationLine:
+                mutations[element]?.firstMutationLine ?? currentLine,
+          );
+        }
+      }
+    }
+    super.visitAssignedVariablePattern(node);
   }
 
   @override
@@ -123,103 +192,231 @@ class InBlockVisitor extends RecursiveAstVisitor<void> {
     VariableElement element,
     bool isDeclaredInsideSlice,
   ) {
-    final isDeclaredBeforeSlice =
-        declOffset >= 0 && declOffset < sliceStartOffset;
+    if ((declOffset >= 0 && declOffset < sliceStartOffset) ||
+        (!isDeclaredInsideSlice && declOffset < sliceStartOffset)) {
+      _processValidUsage(declOffset, node, element);
+    }
+  }
+
+  void _processValidUsage(
+    int declOffset,
+    SimpleIdentifier node,
+    VariableElement element,
+  ) {
     final isWrite = node.inSetterContext();
     final isRead = node.inGetterContext();
     final currentLine = lineInfo.getLocation(node.offset).lineNumber;
-    final typeName = _resolveTypeName(element);
 
-    if (isDeclaredBeforeSlice ||
-        (!isDeclaredInsideSlice && declOffset < sliceStartOffset)) {
-      final declLine = declOffset >= 0
-          ? lineInfo.getLocation(declOffset).lineNumber
-          : currentLine;
+    final staticType = node.staticType;
+    final typeString = staticType?.getDisplayString() ?? '';
+    final typeName =
+        staticType != null &&
+            !staticType.isDartCoreNull &&
+            typeString != 'dynamic'
+        ? staticType.getDisplayString()
+        : _resolveTypeName(element);
 
-      if (isRead && !inputs.containsKey(element)) {
-        inputs[element] = VariableUsage(
+    final declLine = declOffset >= 0
+        ? lineInfo.getLocation(declOffset).lineNumber
+        : currentLine;
+
+    if (isRead && !inputs.containsKey(element)) {
+      inputs[element] = VariableUsage(
+        name: element.name ?? node.name,
+        type: typeName,
+        declarationOffset: declOffset,
+        declarationLine: declLine,
+      );
+    }
+
+    if (isWrite) {
+      _addClosureEscapeIfRequired(node, currentLine, element.name ?? node.name);
+
+      final existing = inputs[element];
+      inputs[element] =
+          (existing ??
+                  VariableUsage(
+                    name: element.name ?? node.name,
+                    type: typeName,
+                    declarationOffset: declOffset,
+                    declarationLine: declLine,
+                  ))
+              .copyWith(
+                isMutated: true,
+                firstMutationLine: existing?.firstMutationLine ?? currentLine,
+              );
+
+      mutations[element] = VariableUsage(
+        name: element.name ?? node.name,
+        type: typeName,
+        declarationOffset: declOffset,
+        declarationLine: declLine,
+        isMutated: true,
+        firstMutationLine: mutations[element]?.firstMutationLine ?? currentLine,
+      );
+    } else {
+      inputs.putIfAbsent(
+        element,
+        () => VariableUsage(
           name: element.name ?? node.name,
           type: typeName,
           declarationOffset: declOffset,
           declarationLine: declLine,
-        );
-      }
+        ),
+      );
+    }
+  }
 
-      if (isWrite) {
-        final existing = inputs[element];
-        inputs[element] =
-            (existing ??
-                    VariableUsage(
-                      name: element.name ?? node.name,
-                      type: typeName,
-                      declarationOffset: declOffset,
-                      declarationLine: declLine,
-                    ))
-                .copyWith(
-                  isMutated: true,
-                  firstMutationLine: existing?.firstMutationLine ?? currentLine,
-                );
+  void _addClosureEscapeIfRequired(
+    AstNode node,
+    int currentLine,
+    String variableName,
+  ) {
+    if (_isInsideNestedFunction(node)) {
+      escapes.add(
+        ControlFlowEscape(
+          type: ControlFlowEscapeType.closureEscape,
+          line: currentLine,
+          description:
+              'Variable $variableName mutated inside a nested function',
+        ),
+      );
+    }
+  }
 
-        mutations[element] = VariableUsage(
-          name: element.name ?? node.name,
-          type: typeName,
-          isMutated: true,
-          declarationOffset: declOffset,
-          declarationLine: declLine,
-          firstMutationLine:
-              mutations[element]?.firstMutationLine ?? currentLine,
-        );
-      }
+  void _addConstructorInitializerEscape(AstNode node) {
+    if (_isWithinSlice(node)) {
+      escapes.add(
+        ControlFlowEscape(
+          type: ControlFlowEscapeType.constructorInitializerEscape,
+          line: lineInfo.getLocation(node.offset).lineNumber,
+          description: 'Cannot extract constructor initializer expressions',
+        ),
+      );
     }
   }
 
   @override
-  void visitReturnStatement(ReturnStatement node) {
+  void visitConstructorFieldInitializer(ConstructorFieldInitializer node) {
+    _addConstructorInitializerEscape(node);
+    super.visitConstructorFieldInitializer(node);
+  }
+
+  @override
+  void visitSuperConstructorInvocation(SuperConstructorInvocation node) {
+    _addConstructorInitializerEscape(node);
+    super.visitSuperConstructorInvocation(node);
+  }
+
+  @override
+  void visitRedirectingConstructorInvocation(
+    RedirectingConstructorInvocation node,
+  ) {
+    _addConstructorInitializerEscape(node);
+    super.visitRedirectingConstructorInvocation(node);
+  }
+
+  @override
+  void visitAssertInitializer(AssertInitializer node) {
+    _addConstructorInitializerEscape(node);
+    super.visitAssertInitializer(node);
+  }
+
+  @override
+  void visitForStatement(ForStatement node) {
+    if (_isWithinSlice(node) && node.awaitKeyword != null) {
+      hasAwait = true;
+    }
+    super.visitForStatement(node);
+  }
+
+  @override
+  void visitRethrowExpression(RethrowExpression node) {
     if (_isWithinSlice(node)) {
-      if (!_isInsideNestedFunction(node)) {
+      var current = node.parent;
+      var inCatch = false;
+      while (current != null) {
+        if (current is CatchClause) {
+          if (current.offset >= sliceStartOffset) {
+            inCatch = true;
+          }
+          break;
+        }
+        current = current.parent;
+      }
+      if (!inCatch) {
         escapes.add(
           ControlFlowEscape(
-            type: ControlFlowEscapeType.earlyReturn,
+            type: ControlFlowEscapeType.rethrowEscape,
             line: lineInfo.getLocation(node.offset).lineNumber,
-            description: 'Early return statement alters caller control flow',
+            description:
+                'Rethrow statement outside catch clause in extracted slice',
           ),
         );
       }
     }
-    super.visitReturnStatement(node);
+    super.visitRethrowExpression(node);
   }
 
   @override
   void visitBreakStatement(BreakStatement node) {
-    if (_isWithinSlice(node)) {
-      if (!_isEnclosedByBreakableWithinSlice(node)) {
+    if (_isWithinSlice(node)) _processBreak(node);
+    super.visitBreakStatement(node);
+  }
+
+  void _processBreak(BreakStatement node) {
+    if (node.label != null) {
+      final targetOffset = _resolveLabelTargetOffset(node.label!);
+      if (targetOffset < sliceStartOffset || targetOffset > sliceEndOffset) {
         escapes.add(
           ControlFlowEscape(
             type: ControlFlowEscapeType.loopBreak,
             line: lineInfo.getLocation(node.offset).lineNumber,
-            description: 'Break statement targets loop outside extracted slice',
+            description:
+                'Break statement targets label outside extracted slice',
           ),
         );
       }
+    } else if (!_isEnclosedByBreakableWithinSlice(node)) {
+      escapes.add(
+        ControlFlowEscape(
+          type: ControlFlowEscapeType.loopBreak,
+          line: lineInfo.getLocation(node.offset).lineNumber,
+          description: 'Break statement targets loop outside extracted slice',
+        ),
+      );
     }
-    super.visitBreakStatement(node);
   }
 
   @override
   void visitContinueStatement(ContinueStatement node) {
-    if (_isWithinSlice(node)) {
-      if (!_isEnclosedByLoopWithinSlice(node)) {
+    if (_isWithinSlice(node)) _processContinue(node);
+    super.visitContinueStatement(node);
+  }
+
+  void _processContinue(ContinueStatement node) {
+    if (node.label != null) {
+      final targetOffset = _resolveLabelTargetOffset(node.label!);
+      if (targetOffset < sliceStartOffset || targetOffset > sliceEndOffset) {
         escapes.add(
           ControlFlowEscape(
             type: ControlFlowEscapeType.loopContinue,
             line: lineInfo.getLocation(node.offset).lineNumber,
             description:
-                'Continue statement targets loop outside extracted slice',
+                'Continue statement targets label outside extracted slice',
           ),
         );
       }
+    } else if (!_isEnclosedByLoopWithinSlice(node)) {
+      escapes.add(
+        ControlFlowEscape(
+          type: ControlFlowEscapeType.loopContinue,
+          line: lineInfo.getLocation(node.offset).lineNumber,
+          description:
+              'Continue statement targets loop outside extracted slice',
+        ),
+      );
     }
-    super.visitContinueStatement(node);
   }
 
   @override
@@ -234,6 +431,39 @@ class InBlockVisitor extends RecursiveAstVisitor<void> {
       );
     }
     super.visitYieldStatement(node);
+  }
+
+  int _resolveLabelTargetOffset(AstNode labelNode) {
+    try {
+      final targetName = _extractName(labelNode);
+      var current = labelNode.parent;
+      while (current != null) {
+        if (current is LabeledStatement) {
+          for (final l in current.labels) {
+            final lName = _extractName(l);
+            if (lName == targetName) {
+              return current.offset;
+            }
+          }
+        }
+        current = current.parent;
+      }
+    } catch (_) {}
+    return -1;
+  }
+
+  String _extractName(Object? node) {
+    if (node == null) return '';
+    try {
+      if (node is SimpleIdentifier) return node.name;
+      final astNode = node as AstNode;
+      final tokens = astNode.childEntities.whereType<Token>();
+      if (tokens.isNotEmpty) return tokens.first.lexeme;
+      for (final entity in astNode.childEntities) {
+        if (entity is SimpleIdentifier) return entity.name;
+      }
+    } catch (_) {}
+    return '';
   }
 
   bool _isInsideNestedFunction(AstNode node) {
