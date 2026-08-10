@@ -257,14 +257,18 @@ Tier 1/2.
 These bullets are the ONLY selection rules:
 
 * **Cleanly extractable, ≤ 1 live output, ≤ 3 inputs** → Tier 2: extract a
-  standard private helper returning that value.
+  standard private helper returning that value. If the helper does not read or
+  mutate class instance state (`this`), declare it as a private top-level
+  function (or static method) rather than an instance method.
 * **Cleanly extractable, 2+ live outputs** → Tier 1: extract a static or
   top-level function and use the synthesized named record signature
   verbatim. Private, file-local slices use named records at ANY output
   count — do NOT mint single-use `_XxxResult` dataclasses for them. Reserve
   a dedicated `Result` dataclass for values that cross a public API or
-  library boundary, or that need methods or invariants. *Advisory*: 5+ live
-  outputs usually means the slice is cut at the wrong seam — try a
+  library boundary, or that need methods or invariants. If the helper does not
+  read or mutate class instance state (`this`), declare it as a private
+  top-level function (or static method) rather than an instance method. *Advisory*:
+  5+ live outputs usually means the slice is cut at the wrong seam — try a
   different boundary before shipping a wide record.
 * **Control-flow escapes** → apply in preference order:
   1. Enlarge the slice to include the whole loop (natural seams, above) and
@@ -290,9 +294,12 @@ When choosing how to reduce complexity on a large Dart function, follow this **3
    top-level functions returning Dart 3 named records
    (`final (:data, :errors) = _stepOne(input);`); a dedicated `Result` /
    `Response` dataclass only where the value crosses a public API or
-   library boundary or needs methods/invariants.
+   library boundary or needs methods/invariants. All extracted helpers that
+   do not access class instance state (`this`) MUST be declared as private
+   top-level functions (or static methods) to guarantee referential
+   transparency and prevent temporal coupling.
 2. **Tier 2 — Standard Extract Method (second choice)**: standard private
-   helper methods taking <= 3 arguments.
+   helper methods or top-level private functions taking <= 3 arguments.
 3. **Tier 3 — Encapsulated Method Object (last resort)**: permitted only
    when the mutation-web check above passes with recorded evidence. Then
    read [references/method-object.md](references/method-object.md) for the

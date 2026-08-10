@@ -1,3 +1,12 @@
+## 0.2.2+3
+
+- Update the `dart-cognitive-complexity` agent skill:
+  - Add explicit rule under Tier 1/2 prescribing that extracted private helper
+    routines that do not read or mutate class instance state (`this`) must be
+    declared as private top-level functions (or `static` methods) rather than
+    instance methods.
+- No library or CLI code changes.
+
 ## 0.2.2+2
 
 - Refine the skill's 3-Tier Decomposition Rubric per empirical feedback
