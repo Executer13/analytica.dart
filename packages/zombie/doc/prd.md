@@ -121,7 +121,19 @@ Designed for low token overhead and actionable precision, including orphan test 
 
 ---
 
-## 5. Next Planning Dimensions (Backlog for Discussion)
+## 5. Phased Delivery Roadmap
+
+<!-- mdformat off(prevent table wrapping) -->
+| Phase | Milestone | Scope | Key Rationale & Risk Profile |
+| :--- | :--- | :--- | :--- |
+| **Phase 1 (MVP)** | **Top-Level Declarations** | Top-level classes, functions, mixins, extensions, extension types, typedefs, and top-level variables in `lib/src/`, `bin/`, `tool/`, `example/`. | **Highest ROI, Lowest Risk**: Zero polymorphism or subtype dispatch ambiguity. Deleting a dead top-level class safely wipes out all its internal dead members and unused imports in one clean strike without breaking public API contracts. |
+| **Phase 2** | **Internal Class & Mixin Members** | Methods, fields, constructors, getters, and setters on unexported classes in `lib/src/`. | **Medium Complexity**: Requires Class Hierarchy Analysis (CHA) to prevent false positives on virtual interface overrides (`implements BaseHandler`). |
+| **Phase 3** | **Enum Constants & Positional Pruning** | Enum values (`Status.deprecated`) and positional constructor fields. | **High Subtlety**: Requires verifying Dart 3 pattern match / switch expression exhaustiveness and `.values` array usage. |
+<!-- mdformat on -->
+
+---
+
+## 6. Next Planning Dimensions (Backlog for Discussion)
 
 1. **Remediation Automation**: Safe deletion AST rewrite mechanics (e.g. `--fix` / `--remove`).
 2. **CLI Flags & Configuration**: `--format=json|markdown`, `--include-tools`, `--ignore-tests`.
