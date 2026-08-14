@@ -5,5 +5,6 @@ Deterministic reachability and dead/unused declaration analysis for Dart package
 ## Documentation
 
 * [PRD & Specifications](doc/prd.md)
+* [Technical Approach & Architecture](doc/approach.md)
 * [Phase 1 Taxonomy: Top-Level Declarations](doc/taxonomy.md)
 * [Phase 2/3 Taxonomy: Internal Members & Enums](doc/taxonomy_phase2.md)
