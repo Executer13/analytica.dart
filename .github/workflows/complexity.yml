@@ -21,8 +21,8 @@ jobs:
         uses: dart-lang/setup-dart@v1
 
       - name: Self-Dogfood Complexity Check
-        # Uses the action definition in the current workspace (branch HEAD code!)
-        uses: ./
+        # Uses the action definition in packages/cognitive_complexity
+        uses: ./packages/cognitive_complexity
         with:
           diff-base: origin/${{ github.base_ref }}
           fail-threshold: 15
