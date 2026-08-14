@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:analytica/analyzer.dart';
 import 'package:analyzer/dart/analysis/features.dart';
 import 'package:analyzer/dart/analysis/utilities.dart';
 import 'package:analyzer/dart/ast/ast.dart';
@@ -6,6 +7,8 @@ import 'package:analyzer/dart/ast/visitor.dart';
 import 'package:analyzer/source/line_info.dart';
 import 'package:path/path.dart' as p;
 import 'cognitive_complexity_visitor.dart';
+
+export 'package:analytica/analyzer.dart' show isExcludedPath;
 
 /// Represents the analyzed cognitive complexity of a specific declaration.
 class FunctionComplexity {
@@ -33,18 +36,6 @@ class FunctionComplexity {
 
   @override
   String toString() => '$name ($filePath:L$startLine-$endLine): $score';
-}
-
-/// Whether [relativePath] sits inside a directory that should never be
-/// scanned (`.dart_tool`, `.git`, or `build` output).
-///
-/// Matches whole path segments, so `.github/` or `builders/` are not
-/// mistaken for `.git/` or `build/`.
-bool isExcludedPath(String relativePath) {
-  final segments = p.split(p.normalize(relativePath));
-  return segments.contains('.dart_tool') ||
-      segments.contains('.git') ||
-      segments.contains('build');
 }
 
 /// Analyzes Dart files and directories to compute Cognitive Complexity scores.
@@ -138,42 +129,6 @@ class _DeclarationFinder extends RecursiveAstVisitor<void> {
 
   _DeclarationFinder({required this.filePath, required this.lineInfo});
 
-  static String? _getDeclarationName(AstNode decl) {
-    if (decl is ClassDeclaration) {
-      return decl.namePart.typeName.lexeme;
-    }
-    if (decl is EnumDeclaration) {
-      return decl.namePart.typeName.lexeme;
-    }
-    if (decl is MixinDeclaration) {
-      return decl.name.lexeme;
-    }
-    if (decl is ExtensionDeclaration) {
-      return decl.name?.lexeme ?? '<unnamed extension>';
-    }
-    if (decl is ExtensionTypeDeclaration) {
-      final d = decl as dynamic;
-      try {
-        // ignore: avoid_dynamic_calls
-        final namePart = d.namePart;
-        if (namePart != null) {
-          // ignore: avoid_dynamic_calls
-          return namePart.typeName.lexeme as String;
-        }
-      } catch (_) {}
-
-      try {
-        // ignore: avoid_dynamic_calls
-        final pc = d.primaryConstructor;
-        if (pc != null) {
-          // ignore: avoid_dynamic_calls
-          return pc.beginToken.lexeme as String;
-        }
-      } catch (_) {}
-    }
-    return null;
-  }
-
   String? _getEnclosingName(AstNode node) {
     var current = node.parent;
     while (current != null) {
@@ -182,7 +137,7 @@ class _DeclarationFinder extends RecursiveAstVisitor<void> {
           current is MixinDeclaration ||
           current is ExtensionTypeDeclaration ||
           current is ExtensionDeclaration) {
-        return _getDeclarationName(current);
+        return extractNodeName(current);
       }
       current = current.parent;
     }

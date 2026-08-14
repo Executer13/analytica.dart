@@ -1,7 +1,6 @@
 import 'dart:io';
 
-import 'package:analytica/analytica.dart';
-import 'package:analyzer/dart/analysis/analysis_context_collection.dart';
+import 'package:analytica/analyzer.dart';
 import 'package:analyzer/dart/analysis/results.dart';
 import 'package:analyzer/dart/ast/ast.dart';
 import 'package:analyzer/dart/ast/visitor.dart';
@@ -37,36 +36,11 @@ class DataFlowAnalyzer {
       throw FileSystemException('Target file does not exist', filePath);
     }
 
-    final provided = sdkPath;
-    if (provided != null && !isValidSdk(provided)) {
-      throw SdkDiscoveryException(
-        'The provided SDK path "$provided" does not point to a valid Dart '
-        'SDK root (missing lib/_internal).',
-      );
-    }
-
-    final effectiveSdkPath = provided ?? findSdkPath();
-    if (effectiveSdkPath == null) {
-      throw const SdkDiscoveryException(
-        'Cannot locate a Dart SDK for analysis. This happens when running as '
-        'a standalone AOT executable (e.g. '
-        '`dart run cognitive_complexity:data_flow@`), where the running '
-        'executable is not part of an SDK. Pass --sdk-path, set the DART_SDK '
-        'environment variable, or ensure a Dart SDK (or Flutter checkout) is '
-        'on PATH.',
-      );
-    }
-
-    final collection = AnalysisContextCollection(
+    final helper = AnalysisContextHelper(
       includedPaths: [absPath],
-      sdkPath: effectiveSdkPath,
+      sdkPath: sdkPath,
     );
-    final context = collection.contextFor(absPath);
-    final unitResult = await context.currentSession.getResolvedUnit(absPath);
-
-    if (unitResult is! ResolvedUnitResult || !unitResult.exists) {
-      throw StateError('Failed to resolve Dart unit for "$filePath"');
-    }
+    final unitResult = await helper.getRequiredResolvedUnit(absPath);
 
     return _analyzeResolvedUnit(
       unitResult: unitResult,

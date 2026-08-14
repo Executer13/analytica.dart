@@ -1,5 +1,4 @@
-import 'package:analytica/analytica.dart';
-import 'package:analyzer/dart/analysis/analysis_context_collection.dart';
+import 'package:analytica/analyzer.dart';
 import 'package:analyzer/dart/analysis/results.dart';
 import 'package:analyzer/dart/ast/ast.dart';
 import 'package:analyzer/dart/ast/visitor.dart';
@@ -20,21 +19,13 @@ class ZombieEngine {
 
   /// Performs reachability analysis on the target package.
   Future<ZombieReport> analyze() async {
-    final effectiveSdkPath = options.sdkPath ?? findSdkPath();
-    if (effectiveSdkPath == null) {
-      throw const SdkDiscoveryException(
-        'Cannot locate a Dart SDK for analysis. Pass --sdk-path, set the '
-        'DART_SDK environment variable, or ensure a Dart SDK is on PATH.',
-      );
-    }
-
     final harvester = RootHarvester(options);
     final topology = harvester.harvestTopology();
 
     final absolutePackagePath = p.normalize(p.absolute(options.packagePath));
-    final collection = AnalysisContextCollection(
+    final contextHelper = AnalysisContextHelper(
       includedPaths: [absolutePackagePath],
-      sdkPath: effectiveSdkPath,
+      sdkPath: options.sdkPath,
     );
 
     final allNodes = <DeclarationNode>[];
@@ -52,10 +43,9 @@ class ZombieEngine {
     // Step 1: Single-pass parse and resolution for all files in topology.
     for (final relPath in topology.allFiles) {
       final absPath = p.join(absolutePackagePath, relPath);
-      final context = collection.contextFor(absPath);
-      final unitResult = await context.currentSession.getResolvedUnit(absPath);
+      final unitResult = await contextHelper.getResolvedUnit(absPath);
 
-      if (unitResult is! ResolvedUnitResult || !unitResult.exists) {
+      if (unitResult == null) {
         continue;
       }
 
@@ -241,10 +231,7 @@ class ZombieEngine {
     if (options.mode == AnalysisMode.library) {
       for (final relPath in topology.publicLibFiles) {
         final absPath = p.join(absolutePackagePath, relPath);
-        final context = collection.contextFor(absPath);
-        final unitResult = await context.currentSession.getResolvedUnit(
-          absPath,
-        );
+        final unitResult = await contextHelper.getResolvedUnit(absPath);
         if (unitResult is ResolvedUnitResult) {
           final libElem = unitResult.libraryElement;
           for (final exportedElem

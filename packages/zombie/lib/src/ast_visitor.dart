@@ -1,94 +1,15 @@
+import 'package:analytica/analyzer.dart';
 import 'package:analyzer/dart/ast/ast.dart';
-import 'package:analyzer/dart/ast/token.dart';
 import 'package:analyzer/dart/ast/visitor.dart';
 import 'package:analyzer/dart/element/element.dart';
 import 'package:path/path.dart' as p;
 
-/// Finds the enclosing top-level element for a given element.
-Element? getTopLevelElement(Element elem) {
-  Element? current = elem;
-  while (current != null) {
-    final enclosing = current.enclosingElement;
-    if (enclosing == null || enclosing is LibraryElement) {
-      return current;
-    }
-    current = enclosing;
-  }
-  return null;
-}
-
-/// Extracts a string name from an AST node safely.
-String? extractNodeName(AstNode node) {
-  if (node is ClassDeclaration) {
-    return node.declaredFragment?.element.name ?? _findFirstIdentifier(node);
-  }
-  if (node is EnumDeclaration) {
-    return node.declaredFragment?.element.name ?? _findFirstIdentifier(node);
-  }
-  if (node is MixinDeclaration) {
-    return node.declaredFragment?.element.name ?? _findFirstIdentifier(node);
-  }
-  if (node is ExtensionDeclaration) {
-    return node.declaredFragment?.element.name ?? _findFirstIdentifier(node);
-  }
-  if (node is ExtensionTypeDeclaration) {
-    return node.declaredFragment?.element.name ?? _findFirstIdentifier(node);
-  }
-  if (node is TypeAlias) {
-    return node.declaredFragment?.element.name ?? _findFirstIdentifier(node);
-  }
-  if (node is FunctionDeclaration) {
-    return node.declaredFragment?.element.name ?? _findFirstIdentifier(node);
-  }
-  if (node is VariableDeclaration) {
-    return node.declaredFragment?.element.name ?? node.name.lexeme;
-  }
-  return _findFirstIdentifier(node);
-}
-
-String? _findFirstIdentifier(AstNode node) {
-  for (final entity in node.childEntities) {
-    if (entity is Token && entity.type == TokenType.IDENTIFIER) {
-      return entity.lexeme;
-    }
-  }
-  return null;
-}
-
-/// Checks if an element or AST node has test support annotations / conventions.
-bool isTestSupportDeclaration(AnnotatedNode node, String name) {
-  if (name.startsWith('Fake') ||
-      name.startsWith('Mock') ||
-      name.startsWith('Stub') ||
-      name.endsWith('Fake') ||
-      name.endsWith('Mock') ||
-      name.endsWith('Stub')) {
-    return true;
-  }
-
-  for (final meta in node.metadata) {
-    final rawName = meta.name.name;
-    final metaName = rawName.contains('.') ? rawName.split('.').last : rawName;
-    if (metaName == 'visibleForTesting' ||
-        metaName == 'visibleForOverriding' ||
-        metaName == 'protected') {
-      return true;
-    }
-  }
-  return false;
-}
-
-/// Checks if an AST node has native/entrypoint annotations.
-bool isNativeOrEntryPoint(AnnotatedNode node) {
-  for (final meta in node.metadata) {
-    final rawName = meta.name.name;
-    final metaName = rawName.contains('.') ? rawName.split('.').last : rawName;
-    if (metaName == 'Native' || metaName == 'pragma') {
-      return true;
-    }
-  }
-  return false;
-}
+export 'package:analytica/analyzer.dart'
+    show
+        extractNodeName,
+        getTopLevelElement,
+        isNativeOrEntryPoint,
+        isTestSupportDeclaration;
 
 /// AST Visitor that gathers all references to top-level elements within a
 /// declaration or code block, strictly ignoring doc comments and comments.
