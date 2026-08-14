@@ -117,6 +117,10 @@ class ZombieEngine {
             }
 
             final extractor = ElementReferenceExtractor(absolutePackagePath);
+            decl.variables.type?.accept(extractor);
+            for (final meta in decl.metadata) {
+              meta.accept(extractor);
+            }
             variable.accept(extractor);
             nodeOutboundElements[node] = extractor.referencedTopLevelElements;
           }
@@ -255,10 +259,15 @@ class ZombieEngine {
       }
     }
 
-    // 3.2 Executable roots (bin/** main).
+    // 3.2 Executable roots (bin/** main, lib/main.dart & lib/main_*.dart main).
     for (final node in allNodes) {
-      if (topology.roleOf(node.relativeFilePath) == FileRole.executable &&
-          node.name == 'main') {
+      final isBinMain =
+          topology.roleOf(node.relativeFilePath) == FileRole.executable &&
+          node.name == 'main';
+      final isFlutterMain =
+          PackageTopology.isFlutterEntrypoint(node.relativeFilePath) &&
+          node.name == 'main';
+      if (isBinMain || isFlutterMain) {
         productionRoots.add(node.id);
       }
     }
@@ -523,6 +532,9 @@ class ZombieEngine {
     if (decl is ClassDeclaration) {
       return (DeclarationKind.classType, decl.sealedKeyword != null);
     }
+    if (decl is ClassTypeAlias) {
+      return (DeclarationKind.classType, false);
+    }
     if (decl is EnumDeclaration) {
       return (DeclarationKind.enumType, false);
     }
@@ -575,8 +587,9 @@ class _DiscoveredSite {
   const _DiscoveredSite({required this.site, required this.referencedElements});
 }
 
-/// Visitor that locates test invocations (`test(...)`, `group(...)`) in
-/// test files and extracts elements referenced within that specific test block.
+/// Visitor that locates test invocations (`test(...)`, `testWidgets(...)`,
+/// `solo_test(...)`) in test files and extracts elements referenced within
+/// that specific leaf test block.
 class _TestCallSiteVisitor extends RecursiveAstVisitor<void> {
   final String packageRoot;
   final String relativeFilePath;
@@ -594,7 +607,6 @@ class _TestCallSiteVisitor extends RecursiveAstVisitor<void> {
     final methodName = node.methodName.name;
     if (methodName == 'test' ||
         methodName == 'testWidgets' ||
-        methodName == 'group' ||
         methodName == 'solo_test') {
       final loc = lineInfo.getLocation(node.offset);
       String? description;
@@ -602,6 +614,8 @@ class _TestCallSiteVisitor extends RecursiveAstVisitor<void> {
         final firstArg = node.argumentList.arguments.first;
         if (firstArg is SimpleStringLiteral) {
           description = firstArg.value;
+        } else if (firstArg is StringLiteral) {
+          description = firstArg.stringValue;
         }
       }
 

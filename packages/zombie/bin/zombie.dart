@@ -3,6 +3,8 @@ import 'package:zombie/src/cli.dart';
 
 Future<void> main(List<String> args) async {
   final runner = ZombieCliRunner();
-  final exitCode = await runner.run(args);
-  exit(exitCode);
+  final code = await runner.run(args);
+  if (code != 0) {
+    exitCode = code;
+  }
 }

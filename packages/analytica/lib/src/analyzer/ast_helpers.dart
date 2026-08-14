@@ -28,6 +28,8 @@ const _declarationHeaderKeywords = {
 String? extractNodeName(AstNode node) => switch (node) {
   ClassDeclaration(:final declaredFragment) =>
     declaredFragment?.element.name ?? _findFirstIdentifier(node),
+  ClassTypeAlias(:final declaredFragment, :final name) =>
+    declaredFragment?.element.name ?? name.lexeme,
   EnumDeclaration(:final declaredFragment) =>
     declaredFragment?.element.name ?? _findFirstIdentifier(node),
   MixinDeclaration(:final declaredFragment, :final name) =>
@@ -166,7 +168,8 @@ bool isNativeOrEntryPoint(AnnotatedNode node) {
 /// mistaken for `.git/` or `build/`.
 bool isExcludedPath(String relativePath) {
   final segments = p.split(p.normalize(relativePath));
+  if (segments.isEmpty) return false;
   return segments.contains('.dart_tool') ||
       segments.contains('.git') ||
-      segments.contains('build');
+      segments.first == 'build';
 }

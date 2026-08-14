@@ -148,6 +148,47 @@ environment:
       check(stdout).contains('`dead`');
     });
 
+    test('writes JSON report to file with --json-output', () async {
+      await d.dir('cli_json_file_pkg', [
+        packageConfig('cli_json_file_pkg'),
+        d.file('pubspec.yaml', '''
+name: cli_json_file_pkg
+environment:
+  sdk: '^3.5.0'
+'''),
+        d.dir('lib', [
+          d.file('cli_json_file_pkg.dart', 'export "src/live.dart";'),
+          d.dir('src', [
+            d.file('live.dart', 'void live() {}'),
+            d.file('dead.dart', 'void dead() {}'),
+          ]),
+        ]),
+      ]).create();
+
+      final jsonOutPath = p.join(d.sandbox, 'zombie_out.json');
+      final proc = await runZombie([
+        '--json-output',
+        jsonOutPath,
+        d.path('cli_json_file_pkg'),
+      ]);
+
+      final stdout = await proc.stdoutStream().join('\n');
+      await proc.shouldExit(0);
+
+      // stdout remains human-readable Markdown
+      check(stdout).contains('# Zombie Code Analysis: ');
+      check(stdout).contains('');
+
+      // json-output file was created and contains valid JSON payload
+      final jsonFile = File(jsonOutPath);
+      check(jsonFile.existsSync()).isTrue();
+      final decoded =
+          jsonDecode(jsonFile.readAsStringSync()) as Map<String, dynamic>;
+      check(decoded['package']).equals('cli_json_file_pkg');
+      final summary = decoded['summary'] as Map<String, dynamic>;
+      check(summary['pure_zombies_found']).equals(1);
+    });
+
     test('runs analysis and outputs Markdown with --format=github', () async {
       await d.dir('cli_github_pkg', [
         packageConfig('cli_github_pkg'),

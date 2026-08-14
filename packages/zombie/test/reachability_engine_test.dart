@@ -746,5 +746,441 @@ export 'src/platform_io.dart'
         check(report.zombies.single.name).equals('UnusedDead');
       },
     );
+
+    test(
+      'harvests lib/main.dart and lib/main_*.dart in closed-app mode',
+      () async {
+        await d.dir('flutter_closed_app_pkg', [
+          packageConfig('flutter_closed_app_pkg'),
+          d.file('pubspec.yaml', '''
+name: flutter_closed_app_pkg
+environment:
+  sdk: '^3.5.0'
+'''),
+          d.dir('lib', [
+            d.file('main.dart', '''
+import 'src/live_service.dart';
+
+void main() {
+  LiveService.run();
+}
+'''),
+            d.file('main_dev.dart', '''
+import 'src/dev_service.dart';
+
+void main() {
+  DevService.runDev();
+}
+'''),
+            d.file('unused_lib_file.dart', '''
+void unusedTopLevel() {}
+'''),
+            d.dir('src', [
+              d.file('live_service.dart', '''
+class LiveService {
+  static void run() {}
+}
+'''),
+              d.file('dev_service.dart', '''
+class DevService {
+  static void runDev() {}
+}
+'''),
+              d.file('dead_service.dart', '''
+class DeadService {}
+'''),
+            ]),
+          ]),
+        ]).create();
+
+        final report = await analyzePackage(
+          d.path('flutter_closed_app_pkg'),
+          options: ZombieOptions(
+            packagePath: d.path('flutter_closed_app_pkg'),
+            mode: AnalysisMode.closedApp,
+          ),
+        );
+
+        check(report.pureZombiesFound).equals(2);
+        check(report.testedZombiesFound).equals(0);
+        check(report.coInvokedHazardsFound).equals(0);
+
+        final zombieNames = report.zombies.map((z) => z.name).toSet();
+        check(zombieNames).contains('DeadService');
+        check(zombieNames).contains('unusedTopLevel');
+        check(zombieNames).not((it) => it.contains('LiveService'));
+        check(zombieNames).not((it) => it.contains('DevService'));
+      },
+    );
+
+    test('evaluates test sites strictly at leaf test invocations inside '
+        'mixed group', () async {
+      await d.dir('leaf_test_group_pkg', [
+        packageConfig('leaf_test_group_pkg'),
+        d.file('pubspec.yaml', '''
+name: leaf_test_group_pkg
+environment:
+  sdk: '^3.5.0'
+'''),
+        d.dir('lib', [
+          d.file('leaf_test_group_pkg.dart', 'export "src/live.dart";'),
+          d.dir('src', [
+            d.file('live.dart', 'class LiveClass { void liveAction() {} }'),
+            d.file('dead.dart', 'class DeadClass { void deadAction() {} }'),
+          ]),
+        ]),
+        d.dir('test', [
+          d.file('mixed_group_test.dart', '''
+import 'package:leaf_test_group_pkg/src/dead.dart';
+import 'package:leaf_test_group_pkg/src/live.dart';
+
+void group(String desc, Function body) {}
+void test(String desc, Function body) {}
+
+void main() {
+  group('mixed group', () {
+    test('tests live code only', () {
+      final live = LiveClass();
+      live.liveAction();
+    });
+
+    test('tests dead code only', () {
+      final dead = DeadClass();
+      dead.deadAction();
+    });
+  });
+}
+'''),
+        ]),
+      ]).create();
+
+      final report = await analyzePackage(d.path('leaf_test_group_pkg'));
+      check(report.pureZombiesFound).equals(0);
+      check(report.testedZombiesFound).equals(1);
+      check(report.coInvokedHazardsFound).equals(0);
+
+      final zombie = report.zombies.single;
+      check(zombie.name).equals('DeadClass');
+      check(zombie.classification).equals(ZombieClassification.testedZombie);
+      check(
+        zombie.suggestedAction,
+      ).equals(SuggestedAction.deleteWithOrphanTests);
+
+      final orphanTests = zombie.orphanTests!;
+      check(orphanTests.length).equals(1);
+      check(orphanTests.first.description).equals('tests dead code only');
+      check(orphanTests.first.coInvokedHazard).isFalse();
+    });
+
+    test(
+      'records reachability edges from compound assignment operators',
+      () async {
+        await d.dir('compound_assignment_pkg', [
+          packageConfig('compound_assignment_pkg'),
+          d.file('pubspec.yaml', '''
+name: compound_assignment_pkg
+environment:
+  sdk: '^3.5.0'
+'''),
+          d.dir('lib', [
+            d.file('compound_assignment_pkg.dart', 'export "src/live.dart";'),
+            d.dir('src', [
+              d.file('live.dart', '''
+import 'operators.dart';
+
+class Accumulator {
+  void run() {
+    var c = Counter(10);
+    c += 5;
+    print(c.count);
+  }
+}
+'''),
+              d.file('operators.dart', '''
+class Counter {
+  final int count;
+  const Counter(this.count);
+}
+
+extension CounterAdd on Counter {
+  Counter operator +(int delta) => Counter(count + delta);
+}
+
+extension CounterSub on Counter {
+  Counter operator -(int delta) => Counter(count - delta);
+}
+'''),
+            ]),
+          ]),
+        ]).create();
+
+        final report = await analyzePackage(d.path('compound_assignment_pkg'));
+        check(report.pureZombiesFound).equals(1);
+        final zombie = report.zombies.single;
+        check(zombie.name).equals('CounterSub');
+      },
+    );
+
+    test('records outbound references from top-level variable type annotations '
+        'and metadata', () async {
+      await d.dir('toplevel_var_type_pkg', [
+        packageConfig('toplevel_var_type_pkg'),
+        d.file('pubspec.yaml', '''
+name: toplevel_var_type_pkg
+environment:
+  sdk: '^3.5.0'
+'''),
+        d.dir('lib', [
+          d.file('toplevel_var_type_pkg.dart', '''
+export 'src/state.dart';
+'''),
+          d.dir('src', [
+            d.file('state.dart', '''
+import 'models.dart';
+
+@AnnotationType()
+late UninitializedType globalState;
+'''),
+            d.file('models.dart', '''
+class UninitializedType {}
+class AnnotationType {
+  const AnnotationType();
+}
+class UnusedType {}
+'''),
+          ]),
+        ]),
+      ]).create();
+
+      final report = await analyzePackage(d.path('toplevel_var_type_pkg'));
+      check(report.pureZombiesFound).equals(1);
+      check(report.zombies.single.name).equals('UnusedType');
+    });
+
+    test('analyzes code inside lib/src/build/ without exclusion', () async {
+      await d.dir('lib_src_build_reachability_pkg', [
+        packageConfig('lib_src_build_reachability_pkg'),
+        d.file('pubspec.yaml', '''
+name: lib_src_build_reachability_pkg
+environment:
+  sdk: '^3.5.0'
+'''),
+        d.dir('lib', [
+          d.file('lib_src_build_reachability_pkg.dart', '''
+export 'src/build/code_generator.dart';
+'''),
+          d.dir('src', [
+            d.dir('build', [
+              d.file('code_generator.dart', '''
+class CodeGenerator {
+  void generate() {}
+}
+'''),
+              d.file('unused_generator.dart', '''
+class UnusedGenerator {}
+'''),
+            ]),
+          ]),
+        ]),
+      ]).create();
+
+      final report = await analyzePackage(
+        d.path('lib_src_build_reachability_pkg'),
+      );
+      check(report.pureZombiesFound).equals(1);
+      check(report.zombies.single.name).equals('UnusedGenerator');
+    });
+
+    test('classifies ClassTypeAlias as classType and records superclass and '
+        'mixin references', () async {
+      await d.dir('class_type_alias_pkg', [
+        packageConfig('class_type_alias_pkg'),
+        d.file('pubspec.yaml', '''
+name: class_type_alias_pkg
+environment:
+  sdk: '^3.5.0'
+'''),
+        d.dir('lib', [
+          d.file('class_type_alias_pkg.dart', '''
+export 'src/alias_usage.dart';
+'''),
+          d.dir('src', [
+            d.file('alias_usage.dart', '''
+import 'alias_def.dart';
+
+class Service {
+  void execute() {
+    final live = LiveAlias();
+    print(live);
+  }
+}
+'''),
+            d.file('alias_def.dart', '''
+class BaseType {}
+mixin UsedMixin {}
+mixin UnusedMixin {}
+abstract class UsedInterface {}
+
+class LiveAlias = BaseType with UsedMixin implements UsedInterface;
+class DeadAlias = BaseType with UnusedMixin;
+'''),
+          ]),
+        ]),
+      ]).create();
+
+      final report = await analyzePackage(d.path('class_type_alias_pkg'));
+      check(report.pureZombiesFound).equals(2);
+
+      final zombieNames = report.zombies.map((z) => z.name).toSet();
+      check(zombieNames).contains('DeadAlias');
+      check(zombieNames).contains('UnusedMixin');
+      check(zombieNames).not((it) => it.contains('LiveAlias'));
+      check(zombieNames).not((it) => it.contains('BaseType'));
+      check(zombieNames).not((it) => it.contains('UsedMixin'));
+      check(zombieNames).not((it) => it.contains('UsedInterface'));
+
+      final deadAliasZombie = report.zombies.firstWhere(
+        (z) => z.name == 'DeadAlias',
+      );
+      check(deadAliasZombie.kind).equals(DeclarationKind.classType);
+    });
+
+    test('evaluates testWidgets and solo_test in nested groups', () async {
+      await d.dir('widgets_solo_group_pkg', [
+        packageConfig('widgets_solo_group_pkg'),
+        d.file('pubspec.yaml', '''
+name: widgets_solo_group_pkg
+environment:
+  sdk: '^3.5.0'
+'''),
+        d.dir('lib', [
+          d.file('widgets_solo_group_pkg.dart', 'export "src/live.dart";'),
+          d.dir('src', [
+            d.file('live.dart', 'class LiveWidget {}'),
+            d.file('dead_widget.dart', 'class DeadWidget {}'),
+            d.file('solo_dead.dart', 'class SoloDeadWidget {}'),
+          ]),
+        ]),
+        d.dir('test', [
+          d.file('nested_widget_test.dart', '''
+import 'package:widgets_solo_group_pkg/src/dead_widget.dart';
+import 'package:widgets_solo_group_pkg/src/live.dart';
+import 'package:widgets_solo_group_pkg/src/solo_dead.dart';
+
+void group(String desc, Function body) {}
+void testWidgets(String desc, Function body) {}
+void solo_test(String desc, Function body) {}
+
+void main() {
+  group('outer', () {
+    group('inner', () {
+      testWidgets('tests live widget', () {
+        final live = LiveWidget();
+        print(live);
+      });
+      testWidgets('tests dead widget', () {
+        final dead = DeadWidget();
+        print(dead);
+      });
+      solo_test('tests solo dead', () {
+        final solo = SoloDeadWidget();
+        print(solo);
+      });
+    });
+  });
+}
+'''),
+        ]),
+      ]).create();
+
+      final report = await analyzePackage(d.path('widgets_solo_group_pkg'));
+      check(report.pureZombiesFound).equals(0);
+      check(report.testedZombiesFound).equals(2);
+      check(report.coInvokedHazardsFound).equals(0);
+
+      final deadNames = report.zombies.map((z) => z.name).toSet();
+      check(deadNames).contains('DeadWidget');
+      check(deadNames).contains('SoloDeadWidget');
+      check(deadNames).not((it) => it.contains('LiveWidget'));
+    });
+
+    test('records reachability edges from compound null-aware and '
+        'multiplication operators', () async {
+      await d.dir('compound_extra_pkg', [
+        packageConfig('compound_extra_pkg'),
+        d.file('pubspec.yaml', '''
+name: compound_extra_pkg
+environment:
+  sdk: '^3.5.0'
+'''),
+        d.dir('lib', [
+          d.file('compound_extra_pkg.dart', 'export "src/live.dart";'),
+          d.dir('src', [
+            d.file('live.dart', '''
+import 'helpers.dart';
+
+class Service {
+  void run() {
+    var v = ValueHolder(2);
+    v *= 3;
+    Holder? h;
+    h ??= Holder();
+    print(v);
+    print(h);
+  }
+}
+'''),
+            d.file('helpers.dart', '''
+class ValueHolder {
+  final int val;
+  ValueHolder(this.val);
+  ValueHolder operator *(int mult) => ValueHolder(val * mult);
+}
+
+class Holder {}
+class DeadHelper {}
+'''),
+          ]),
+        ]),
+      ]).create();
+
+      final report = await analyzePackage(d.path('compound_extra_pkg'));
+      check(report.pureZombiesFound).equals(1);
+      check(report.zombies.single.name).equals('DeadHelper');
+    });
+
+    test('records outbound references from multi-variable declarations with '
+        'generic types', () async {
+      await d.dir('multivar_type_pkg', [
+        packageConfig('multivar_type_pkg'),
+        d.file('pubspec.yaml', '''
+name: multivar_type_pkg
+environment:
+  sdk: '^3.5.0'
+'''),
+        d.dir('lib', [
+          d.file('multivar_type_pkg.dart', 'export "src/state.dart";'),
+          d.dir('src', [
+            d.file('state.dart', '''
+import 'models.dart';
+
+@AnnotationClass()
+late List<ItemModel> itemsA, itemsB;
+'''),
+            d.file('models.dart', '''
+class ItemModel {}
+class AnnotationClass {
+  const AnnotationClass();
+}
+class DeadItemModel {}
+'''),
+          ]),
+        ]),
+      ]).create();
+
+      final report = await analyzePackage(d.path('multivar_type_pkg'));
+      check(report.pureZombiesFound).equals(1);
+      check(report.zombies.single.name).equals('DeadItemModel');
+    });
   });
 }

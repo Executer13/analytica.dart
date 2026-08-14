@@ -126,6 +126,43 @@ targets:
       check(topology.demonstrationFiles).isEmpty();
     });
 
+    test('identifies Flutter entrypoints correctly', () {
+      check(PackageTopology.isFlutterEntrypoint('lib/main.dart')).isTrue();
+      check(PackageTopology.isFlutterEntrypoint('lib/main_dev.dart')).isTrue();
+      check(
+        PackageTopology.isFlutterEntrypoint('lib/main_production.dart'),
+      ).isTrue();
+      check(PackageTopology.isFlutterEntrypoint(r'lib\main.dart')).isTrue();
+      check(
+        PackageTopology.isFlutterEntrypoint(r'lib\main_prod.dart'),
+      ).isTrue();
+
+      check(PackageTopology.isFlutterEntrypoint('lib/src/main.dart')).isFalse();
+      check(PackageTopology.isFlutterEntrypoint('bin/main.dart')).isFalse();
+      check(PackageTopology.isFlutterEntrypoint('lib/other.dart')).isFalse();
+    });
+
+    test('does not exclude lib/src/build/ source directory', () async {
+      await d.dir('nested_build_pkg', [
+        packageConfig('nested_build_pkg'),
+        d.file('pubspec.yaml', 'name: nested_build_pkg\n'),
+        d.dir('lib', [
+          d.file('nested_build_pkg.dart', 'export "src/build/builder.dart";'),
+          d.dir('src', [
+            d.dir('build', [d.file('builder.dart', 'void buildHelper() {}')]),
+          ]),
+        ]),
+        d.dir('build', [d.file('output.dart', 'void shouldBeExcluded() {}')]),
+      ]).create();
+
+      final options = ZombieOptions(packagePath: d.path('nested_build_pkg'));
+      final harvester = RootHarvester(options);
+      final topology = harvester.harvestTopology();
+
+      check(topology.internalSrcFiles).contains('lib/src/build/builder.dart');
+      check(topology.allFiles).not((it) => it.contains('build/output.dart'));
+    });
+
     test('extracts multi-line YAML builder_factories correctly', () async {
       await d.dir('multiline_build_pkg', [
         packageConfig('multiline_build_pkg'),

@@ -68,6 +68,14 @@ class ElementReferenceExtractor extends RecursiveAstVisitor<void> {
   }
 
   @override
+  void visitAssignmentExpression(AssignmentExpression node) {
+    _checkElement(node.element);
+    _checkElement(node.readElement);
+    _checkElement(node.writeElement);
+    super.visitAssignmentExpression(node);
+  }
+
+  @override
   void visitBinaryExpression(BinaryExpression node) {
     _checkElement(node.element);
     super.visitBinaryExpression(node);

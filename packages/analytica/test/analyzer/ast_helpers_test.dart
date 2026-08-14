@@ -28,6 +28,7 @@ void main() {
     test('extracts names across various declarations', () {
       const source = '''
 class MyClass {}
+class MyClassAlias = MyClass with MyMixin;
 enum MyEnum { a, b }
 mixin MyMixin {}
 extension MyExtension on int {}
@@ -50,15 +51,16 @@ class Container {
 
       final decls = parsed.unit.declarations;
       check(extractNodeName(decls[0])).equals('MyClass');
-      check(extractNodeName(decls[1])).equals('MyEnum');
-      check(extractNodeName(decls[2])).equals('MyMixin');
-      check(extractNodeName(decls[3])).equals('MyExtension');
-      check(extractNodeName(decls[4])).isNull();
-      check(extractNodeName(decls[5])).equals('MyExtType');
-      check(extractNodeName(decls[6])).equals('MyTypedef');
-      check(extractNodeName(decls[7])).equals('myFunction');
+      check(extractNodeName(decls[1])).equals('MyClassAlias');
+      check(extractNodeName(decls[2])).equals('MyEnum');
+      check(extractNodeName(decls[3])).equals('MyMixin');
+      check(extractNodeName(decls[4])).equals('MyExtension');
+      check(extractNodeName(decls[5])).isNull();
+      check(extractNodeName(decls[6])).equals('MyExtType');
+      check(extractNodeName(decls[7])).equals('MyTypedef');
+      check(extractNodeName(decls[8])).equals('myFunction');
 
-      final topVar = decls[8] as TopLevelVariableDeclaration;
+      final topVar = decls[9] as TopLevelVariableDeclaration;
       check(extractNodeName(topVar.variables.variables[0])).equals('myVar');
       check(extractNodeName(topVar)).equals('myVar');
 
@@ -249,8 +251,10 @@ void normalFn() {}
       check(isExcludedPath('.dart_tool/package_config.json')).isTrue();
       check(isExcludedPath('.git/HEAD')).isTrue();
       check(isExcludedPath('build/app/outputs')).isTrue();
-      check(isExcludedPath('packages/foo/build/bin.dart')).isTrue();
+      check(isExcludedPath('build/flutter_assets/foo.png')).isTrue();
 
+      check(isExcludedPath('lib/src/build/builder.dart')).isFalse();
+      check(isExcludedPath('packages/foo/build/bin.dart')).isFalse();
       check(isExcludedPath('.github/workflows/ci.yml')).isFalse();
       check(isExcludedPath('lib/builders/code_builder.dart')).isFalse();
       check(isExcludedPath('lib/src/service.dart')).isFalse();

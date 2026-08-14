@@ -17,7 +17,15 @@ ArgParser buildArgParser() {
     ..addFormatOption(
       allowed: ['markdown', 'json', 'github'],
       defaultsTo: 'markdown',
-      help: 'Output formatting mode.',
+      help:
+          'Output formatting mode for stdout (json for agents/CI, markdown for humans).',
+    )
+    ..addOption(
+      'json-output',
+      valueHelp: 'path/to/report.json',
+      help:
+          'Write machine-readable JSON analysis report to the specified file '
+          '(recommended for agents and CI pipelines alongside human stdout).',
     )
     ..addOption(
       'example-mode',
@@ -117,6 +125,7 @@ class ZombieCliRunner {
     final failOnZombies = results.flag('fail-on-zombies');
     final autoPubGet = results.flag('pub-get');
     final sdkPath = results.option('sdk-path');
+    final jsonOutputPath = results.option('json-output');
 
     final options = ZombieOptions(
       packagePath: normalizedPath,
@@ -127,11 +136,19 @@ class ZombieCliRunner {
       failOnZombies: failOnZombies,
       autoPubGet: autoPubGet,
       sdkPath: sdkPath,
+      jsonOutputPath: jsonOutputPath,
     );
 
     try {
       final engine = ZombieEngine(options);
       final report = await engine.analyze();
+
+      if (jsonOutputPath != null) {
+        final jsonOutput = const JsonFormatter().format(report);
+        final file = File(jsonOutputPath);
+        file.parent.createSync(recursive: true);
+        file.writeAsStringSync('$jsonOutput\n');
+      }
 
       final output = switch (format) {
         OutputFormat.json => const JsonFormatter().format(report),

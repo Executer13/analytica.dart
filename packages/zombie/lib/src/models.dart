@@ -144,6 +144,7 @@ class ZombieOptions {
   final bool failOnZombies;
   final bool autoPubGet;
   final String? sdkPath;
+  final String? jsonOutputPath;
 
   const ZombieOptions({
     required this.packagePath,
@@ -154,6 +155,7 @@ class ZombieOptions {
     this.failOnZombies = false,
     this.autoPubGet = false,
     this.sdkPath,
+    this.jsonOutputPath,
   });
 }
 

@@ -106,6 +106,16 @@ class PackageTopology {
     }
     return FileRole.other;
   }
+
+  /// Whether [relativeFilePath] is a Flutter main entrypoint (`lib/main.dart` or `lib/main_*.dart`).
+  static bool isFlutterEntrypoint(String relativeFilePath) {
+    final normalized = p.normalize(relativeFilePath).replaceAll(r'\', '/');
+    final dir = p.dirname(normalized);
+    final base = p.basename(normalized);
+    return dir == 'lib' &&
+        (base == 'main.dart' ||
+            (base.startsWith('main_') && base.endsWith('.dart')));
+  }
 }
 
 /// Harvester that discovers package topology, entrypoints, and roots.
@@ -230,9 +240,10 @@ class RootHarvester {
 
   bool _isExcluded(String relativePath) {
     final segments = p.split(p.normalize(relativePath));
+    if (segments.isEmpty) return false;
     if (segments.contains('.dart_tool') ||
         segments.contains('.git') ||
-        segments.contains('build')) {
+        segments.first == 'build') {
       return true;
     }
 
