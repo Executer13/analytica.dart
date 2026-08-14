@@ -12,19 +12,6 @@ class SdkDiscoveryException implements Exception {
   String toString() => message;
 }
 
-/// Standard throwing getter that delegates to [findSdkPath]. Throws
-/// [SdkDiscoveryException] if no Dart SDK is located.
-String get sdkPath {
-  final path = findSdkPath();
-  if (path == null) {
-    throw const SdkDiscoveryException(
-      'Cannot locate a Dart SDK for analysis. Pass --sdk-path, set the '
-      'DART_SDK environment variable, or ensure a Dart SDK is on PATH.',
-    );
-  }
-  return path;
-}
-
 /// Locates a Dart SDK root, probing in order: the running VM's executable,
 /// the `DART_SDK` environment variable, `dart` binaries on `PATH` (including
 /// Flutter checkouts, whose wrapper script hides the SDK under
