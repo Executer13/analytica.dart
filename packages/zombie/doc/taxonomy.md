@@ -32,7 +32,7 @@ Phase 1 operates at the **Top-Level AST Declaration** granularity (`CompilationU
 <!-- mdformat off(prevent table wrapping) -->
 | Directory | Role in Graph | Deletion Target? | Invariant & Reachability Rule |
 | :--- | :--- | :---: | :--- |
-| **`lib/**`** (non-`src`) | **Public API Root** | ❌ No | In open packages, all exported symbols in `exportNamespace` are **Public Roots**. In private apps (`publish_to: none`), unreferenced top-level files can be flagged. |
+| **`lib/**`** (non-`src`) | **Public API Root** | ❌ No | **Open-World Invariant**: By default, ALL exported symbols in `exportNamespace` across all non-`src` `lib/**` files are **Public Roots** (Preserved). Never assume `publish_to: none` implies zero external consumers, as internal company repos, path dependencies, and monorepos routinely depend on private packages. |
 | **`lib/src/**`** | **Internal Source Target** | ✅ Yes | Declarations are live **only** if reachable from public exports, executables, tests, tools, or examples. |
 | **`bin/**/*.dart`** | **Executable Root** | ✅ Yes (Internal) | `main()` functions are roots. Unused top-level helper declarations in `bin/` are deletion candidates. |
 | **`test/**`, `integration_test/**`** | **Test Consumer Root** | ❌ No | Test `main()` functions are test roots. Test files are never deletion targets for pure zombies. |
@@ -52,9 +52,8 @@ Phase 1 operates at the **Top-Level AST Declaration** granularity (`CompilationU
 | **Tested-Only Isolated Feature** | `lib/src/` | Any | ❌ No | ✅ Yes (Sole Target) | **Tested Zombie** | Delete declaration + delete orphan test block |
 | **Co-Invoked Tested Declaration** | `lib/src/` | Any | ❌ No | ✅ Yes (Shared Test) | **Co-Invoked Zombie** | Flag `co_invoked_test_hazard` (manual refactor) |
 | **Test Support / Fixture / Hook** (`@visibleForTesting`, `Fake*`) | `lib/src/` | Any | ❌ No | ✅ Yes | **Test Support** | Preserve (active test harness) |
-| **Exported Symbol in `exportNamespace`** | `lib/**` (excl. `src`) | Open Package | N/A | N/A | **Public API** | Preserve (external consumer contract) |
+| **Exported Symbol in `exportNamespace`** | `lib/**` (excl. `src`) | Any | N/A | N/A | **Public API** | Preserve (Open-World Invariant) |
 | **Direct Subtype of Live `sealed` Class** | `lib/src/` | Any | (Hierarchy) | N/A | **Sealed Hierarchy** | Preserve (exhaustiveness guarantee) |
-| **Dangling Export in Private App** (`publish_to: none`) | `lib/*.dart` | Private App | ❌ No | ❌ No | **App Zombie** | Delete unreferenced export |
 | **Any Declaration in `example/`** | `example/` | Single/Multi | N/A | N/A | **Demonstration Root** | Preserve (pub.dev documentation) |
 | **Config Entrypoint** (`build.yaml`, `dartPluginClass`) | `lib/` or `lib/src/` | Any | N/A | N/A | **Config Root** | Preserve |
 | **Platform-Conditional Branch** (`if (dart.library.*)`) | `lib/src/` | Any | (Via Web/IO) | N/A | **Platform Live** | Preserve |
