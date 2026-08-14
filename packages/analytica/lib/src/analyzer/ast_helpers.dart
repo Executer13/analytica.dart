@@ -25,50 +25,34 @@ const _declarationHeaderKeywords = {
 /// [TypeAlias], [VariableDeclaration], [MethodDeclaration],
 /// and [ConstructorDeclaration], falling back to recursive identifier token
 /// scanning.
-String? extractNodeName(AstNode node) {
-  if (node is ClassDeclaration) {
-    return node.declaredFragment?.element.name ?? _findFirstIdentifier(node);
-  }
-  if (node is EnumDeclaration) {
-    return node.declaredFragment?.element.name ?? _findFirstIdentifier(node);
-  }
-  if (node is MixinDeclaration) {
-    return node.declaredFragment?.element.name ?? node.name.lexeme;
-  }
-  if (node is ExtensionDeclaration) {
-    return node.declaredFragment?.element.name ?? node.name?.lexeme;
-  }
-  if (node is ExtensionTypeDeclaration) {
-    return node.declaredFragment?.element.name ?? _findFirstIdentifier(node);
-  }
-  if (node is TypeAlias) {
-    return node.declaredFragment?.element.name ?? node.name.lexeme;
-  }
-  if (node is FunctionDeclaration) {
-    return node.declaredFragment?.element.name ?? node.name.lexeme;
-  }
-  if (node is VariableDeclaration) {
-    return node.declaredFragment?.element.name ?? node.name.lexeme;
-  }
-  if (node is MethodDeclaration) {
-    return node.declaredFragment?.element.name ?? node.name.lexeme;
-  }
-  if (node is ConstructorDeclaration) {
-    final constName = node.name?.lexeme;
-    return node.declaredFragment?.element.name ?? constName;
-  }
-  if (node is TopLevelVariableDeclaration) {
-    if (node.variables.variables.isNotEmpty) {
-      return extractNodeName(node.variables.variables.first);
-    }
-  }
-  if (node is FieldDeclaration) {
-    if (node.fields.variables.isNotEmpty) {
-      return extractNodeName(node.fields.variables.first);
-    }
-  }
-  return _findFirstIdentifier(node);
-}
+String? extractNodeName(AstNode node) => switch (node) {
+  ClassDeclaration(:final declaredFragment) =>
+    declaredFragment?.element.name ?? _findFirstIdentifier(node),
+  EnumDeclaration(:final declaredFragment) =>
+    declaredFragment?.element.name ?? _findFirstIdentifier(node),
+  MixinDeclaration(:final declaredFragment, :final name) =>
+    declaredFragment?.element.name ?? name.lexeme,
+  ExtensionDeclaration(:final declaredFragment, :final name) =>
+    declaredFragment?.element.name ?? name?.lexeme,
+  ExtensionTypeDeclaration(:final declaredFragment) =>
+    declaredFragment?.element.name ?? _findFirstIdentifier(node),
+  TypeAlias(:final declaredFragment, :final name) =>
+    declaredFragment?.element.name ?? name.lexeme,
+  FunctionDeclaration(:final declaredFragment, :final name) =>
+    declaredFragment?.element.name ?? name.lexeme,
+  VariableDeclaration(:final declaredFragment, :final name) =>
+    declaredFragment?.element.name ?? name.lexeme,
+  MethodDeclaration(:final declaredFragment, :final name) =>
+    declaredFragment?.element.name ?? name.lexeme,
+  ConstructorDeclaration(:final declaredFragment, :final name) =>
+    declaredFragment?.element.name ?? name?.lexeme,
+  TopLevelVariableDeclaration(:final variables)
+      when variables.variables.isNotEmpty =>
+    extractNodeName(variables.variables.first),
+  FieldDeclaration(:final fields) when fields.variables.isNotEmpty =>
+    extractNodeName(fields.variables.first),
+  _ => _findFirstIdentifier(node),
+};
 
 String? _findFirstIdentifier(AstNode node) {
   for (final entity in node.childEntities) {

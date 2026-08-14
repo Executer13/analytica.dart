@@ -222,18 +222,12 @@ class DataFlowAnalyzer {
     return collector.spans;
   }
 
-  String _getDeclarationName(AstNode node) {
-    if (node is FunctionDeclaration) {
-      return node.name.lexeme;
-    }
-    if (node is MethodDeclaration) {
-      return node.name.lexeme;
-    }
-    if (node is ConstructorDeclaration) {
-      return node.name?.lexeme ?? 'new';
-    }
-    return 'unknown';
-  }
+  String _getDeclarationName(AstNode node) => switch (node) {
+    FunctionDeclaration(:final name) ||
+    MethodDeclaration(:final name) => name.lexeme,
+    ConstructorDeclaration(:final name) => name?.lexeme ?? 'new',
+    _ => 'unknown',
+  };
 }
 
 /// Collects the source spans of loops that strictly enclose the slice; loops
