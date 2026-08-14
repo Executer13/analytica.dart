@@ -140,6 +140,7 @@ class ZombieOptions {
   final AnalysisMode mode;
   final bool includeGenerated;
   final bool failOnZombies;
+  final bool autoPubGet;
   final String? sdkPath;
 
   const ZombieOptions({
@@ -149,8 +150,21 @@ class ZombieOptions {
     this.mode = AnalysisMode.library,
     this.includeGenerated = false,
     this.failOnZombies = false,
+    this.autoPubGet = false,
     this.sdkPath,
   });
+}
+
+/// Exception thrown when package dependencies have not been resolved via
+/// `dart pub get` before running analysis.
+class PackageResolutionException implements Exception {
+  final String message;
+  final String packagePath;
+
+  const PackageResolutionException(this.message, this.packagePath);
+
+  @override
+  String toString() => 'PackageResolutionException: $message ($packagePath)';
 }
 
 /// Details about a test call site referencing a dead declaration.

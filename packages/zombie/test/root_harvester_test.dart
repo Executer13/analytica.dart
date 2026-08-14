@@ -4,10 +4,50 @@ import 'package:test_descriptor/test_descriptor.dart' as d;
 import 'package:zombie/src/models.dart';
 import 'package:zombie/src/root_harvester.dart';
 
+d.DirectoryDescriptor packageConfig(String pkgName) {
+  return d.dir('.dart_tool', [
+    d.file('package_config.json', '''
+{
+  "configVersion": 2,
+  "packages": [
+    {
+      "name": "$pkgName",
+      "rootUri": "../",
+      "packageUri": "lib/",
+      "languageVersion": "3.5"
+    }
+  ]
+}
+'''),
+  ]);
+}
+
 void main() {
   group('RootHarvester & PackageTopology', () {
+    test(
+      'throws PackageResolutionException on missing package_config',
+      () async {
+        await d.dir('unresolved_pkg', [
+          d.file('pubspec.yaml', 'name: unresolved_pkg\n'),
+          d.dir('lib', [d.file('unresolved_pkg.dart', 'void foo() {}')]),
+        ]).create();
+
+        final options = ZombieOptions(packagePath: d.path('unresolved_pkg'));
+        final harvester = RootHarvester(options);
+
+        check(
+          harvester.harvestTopology,
+        ).throws<PackageResolutionException>().which(
+          (it) => it
+              .has((e) => e.message, 'message')
+              .contains('Missing .dart_tool/package_config.json'),
+        );
+      },
+    );
+
     test('discovers package directory topology correctly', () async {
       await d.dir('sample_pkg', [
+        packageConfig('sample_pkg'),
         d.file('pubspec.yaml', '''
 name: sample_pkg
 version: 1.0.0
@@ -69,6 +109,7 @@ targets:
 
     test('respects ExampleMode.skip', () async {
       await d.dir('skip_example_pkg', [
+        packageConfig('skip_example_pkg'),
         d.file('pubspec.yaml', 'name: skip_example_pkg\n'),
         d.dir('lib', [d.file('main.dart', 'void foo() {}')]),
         d.dir('example', [d.file('demo.dart', 'void main() {}')]),
@@ -87,6 +128,7 @@ targets:
 
     test('extracts multi-line YAML builder_factories correctly', () async {
       await d.dir('multiline_build_pkg', [
+        packageConfig('multiline_build_pkg'),
         d.file('pubspec.yaml', 'name: multiline_build_pkg\n'),
         d.file('build.yaml', '''
 targets:

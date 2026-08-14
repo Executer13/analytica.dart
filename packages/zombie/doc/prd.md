@@ -148,6 +148,7 @@ zombie [options] [target_path]
 | `--format` | `json` \| `markdown` (default: `markdown`) | Output formatting mode. |
 | `--example-mode` | `demonstration` (default) \| `strict` \| `skip` | In `demonstration`, code in `example/` is a consumer root and immune from deletion. |
 | `--mode` | `library` (default) \| `closed-app` | In `library` (default), all non-`src` `lib/**` exports are preserved as Public API roots (Open-World Invariant). In `closed-app`, unreferenced exports are flagged. |
+| `--pub-get` | `false` (default) \| `true` | Automatically run `dart pub get` if `.dart_tool/package_config.json` is missing. |
 | `--include-generated` | `false` (default) \| `true` | When false, ignores `*.g.dart`, `*.freezed.dart`. |
 | `--fail-on-zombies` | `false` (default) \| `true` | Exit with non-zero status code if any zombie is detected (for CI gates). |
 <!-- mdformat on -->

@@ -50,6 +50,11 @@ ArgParser buildArgParser() {
       help: 'Path to the Dart SDK root (overrides auto-discovery).',
     )
     ..addFlag(
+      'pub-get',
+      negatable: false,
+      help: 'Automatically run "dart pub get" if dependencies are unresolved.',
+    )
+    ..addFlag(
       'help',
       abbr: 'h',
       negatable: false,
@@ -120,6 +125,7 @@ class ZombieCliRunner {
     final mode = AnalysisMode.fromString(results.option('mode')!);
     final includeGenerated = results.flag('include-generated');
     final failOnZombies = results.flag('fail-on-zombies');
+    final autoPubGet = results.flag('pub-get');
     final sdkPath = results.option('sdk-path');
 
     final options = ZombieOptions(
@@ -129,6 +135,7 @@ class ZombieCliRunner {
       mode: mode,
       includeGenerated: includeGenerated,
       failOnZombies: failOnZombies,
+      autoPubGet: autoPubGet,
       sdkPath: sdkPath,
     );
 
@@ -148,6 +155,9 @@ class ZombieCliRunner {
       }
 
       return ExitCode.success.code;
+    } on PackageResolutionException catch (e) {
+      errSink.writeln('Resolution Error: ${e.message}');
+      return ExitCode.config.code;
     } on SdkDiscoveryException catch (e) {
       errSink.writeln('SDK Error: ${e.message}');
       return ExitCode.unavailable.code;

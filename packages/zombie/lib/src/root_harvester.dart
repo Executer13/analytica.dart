@@ -130,6 +130,34 @@ class RootHarvester {
       );
     }
 
+    final hasDirectConfig = File(
+      p.join(options.packagePath, '.dart_tool', 'package_config.json'),
+    ).existsSync();
+
+    if (!hasDirectConfig && !_hasEnclosingPackageConfig(options.packagePath)) {
+      if (options.autoPubGet) {
+        final result = Process.runSync(Platform.resolvedExecutable, [
+          'pub',
+          'get',
+        ], workingDirectory: options.packagePath);
+        if (result.exitCode != 0) {
+          throw PackageResolutionException(
+            'Failed to resolve dependencies with "dart pub get":\n'
+            '${result.stderr}',
+            options.packagePath,
+          );
+        }
+      } else {
+        throw PackageResolutionException(
+          'Missing .dart_tool/package_config.json for '
+          '"${options.packagePath}".\n'
+          'Please run "dart pub get" before running zombie '
+          '(or pass --pub-get).',
+          options.packagePath,
+        );
+      }
+    }
+
     final pubspecContent = pubspecFile.readAsStringSync();
     final packageName = _extractPackageName(pubspecContent);
     final pluginClassNames = _extractPluginClasses(pubspecContent);
@@ -295,5 +323,21 @@ class RootHarvester {
     } catch (_) {
       return const {};
     }
+  }
+
+  bool _hasEnclosingPackageConfig(String packagePath) {
+    try {
+      var dir = Directory(packagePath).parent;
+      while (dir.path != dir.parent.path) {
+        final config = File(
+          p.join(dir.path, '.dart_tool', 'package_config.json'),
+        );
+        if (config.existsSync()) {
+          return true;
+        }
+        dir = dir.parent;
+      }
+    } catch (_) {}
+    return false;
   }
 }

@@ -6,6 +6,24 @@ import 'package:test/test.dart';
 import 'package:test_descriptor/test_descriptor.dart' as d;
 import 'package:test_process/test_process.dart';
 
+d.DirectoryDescriptor packageConfig(String pkgName) {
+  return d.dir('.dart_tool', [
+    d.file('package_config.json', '''
+{
+  "configVersion": 2,
+  "packages": [
+    {
+      "name": "$pkgName",
+      "rootUri": "../",
+      "packageUri": "lib/",
+      "languageVersion": "3.5"
+    }
+  ]
+}
+'''),
+  ]);
+}
+
 void main() {
   final binPath = File('bin/zombie.dart').existsSync()
       ? p.normalize(p.absolute('bin/zombie.dart'))
@@ -28,6 +46,7 @@ void main() {
       check(stdout).contains('--format');
       check(stdout).contains('--example-mode');
       check(stdout).contains('--mode');
+      check(stdout).contains('--pub-get');
       check(stdout).contains('fail-on-zombies');
     });
 
@@ -49,8 +68,29 @@ void main() {
       await proc.shouldExit(66);
     });
 
+    test('unresolved package exits with code 78 (config)', () async {
+      await d.dir('unresolved_cli_pkg', [
+        d.file('pubspec.yaml', '''
+name: unresolved_cli_pkg
+environment:
+  sdk: '^3.5.0'
+'''),
+        d.dir('lib', [d.file('main.dart', 'void main() {}')]),
+      ]).create();
+
+      final proc = await runZombie([d.path('unresolved_cli_pkg')]);
+      final stderr = await proc.stderrStream().join('\n');
+      await proc.shouldExit(78);
+
+      check(
+        stderr,
+      ).contains('Resolution Error: Missing .dart_tool/package_config.json');
+      check(stderr).contains('Please run "dart pub get"');
+    });
+
     test('runs analysis and outputs JSON with --format=json', () async {
       await d.dir('cli_pkg', [
+        packageConfig('cli_pkg'),
         d.file('pubspec.yaml', '''
 name: cli_pkg
 environment:
@@ -83,6 +123,7 @@ environment:
 
     test('runs analysis and outputs Markdown with --format=markdown', () async {
       await d.dir('cli_md_pkg', [
+        packageConfig('cli_md_pkg'),
         d.file('pubspec.yaml', '''
 name: cli_md_pkg
 environment:
@@ -109,6 +150,7 @@ environment:
 
     test('runs analysis and outputs Markdown with --format=github', () async {
       await d.dir('cli_github_pkg', [
+        packageConfig('cli_github_pkg'),
         d.file('pubspec.yaml', '''
 name: cli_github_pkg
 environment:
@@ -139,6 +181,7 @@ environment:
       '--fail-on-zombies exits with code 1 when zombies are found',
       () async {
         await d.dir('cli_fail_pkg', [
+          packageConfig('cli_fail_pkg'),
           d.file('pubspec.yaml', '''
 name: cli_fail_pkg
 environment:
@@ -166,6 +209,7 @@ environment:
       '--fail-on-zombies exits with code 0 when no zombies are found',
       () async {
         await d.dir('cli_clean_pkg', [
+          packageConfig('cli_clean_pkg'),
           d.file('pubspec.yaml', '''
 name: cli_clean_pkg
 environment:

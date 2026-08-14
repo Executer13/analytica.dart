@@ -3,9 +3,28 @@ import 'package:test/test.dart';
 import 'package:test_descriptor/test_descriptor.dart' as d;
 import 'package:zombie/zombie.dart';
 
+d.DirectoryDescriptor packageConfig(String pkgName) {
+  return d.dir('.dart_tool', [
+    d.file('package_config.json', '''
+{
+  "configVersion": 2,
+  "packages": [
+    {
+      "name": "$pkgName",
+      "rootUri": "../",
+      "packageUri": "lib/",
+      "languageVersion": "3.5"
+    }
+  ]
+}
+'''),
+  ]);
+}
+
 void main() {
   test('zombie public library exports and basic analysis workflow', () async {
     await d.dir('sanity_pkg', [
+      packageConfig('sanity_pkg'),
       d.file('pubspec.yaml', '''
 name: sanity_pkg
 environment:
