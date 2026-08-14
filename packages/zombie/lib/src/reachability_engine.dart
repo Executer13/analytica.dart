@@ -54,7 +54,20 @@ class ZombieEngine {
 
       // Collect conditional imports in directives.
       for (final directive in unitResult.unit.directives) {
-        if (directive is NamespaceDirective) {
+        if (directive is NamespaceDirective &&
+            directive.configurations.isNotEmpty) {
+          final targets = <String>{};
+          final defaultUri = directive.uri.stringValue;
+          if (defaultUri != null && defaultUri.isNotEmpty) {
+            final resolvedTarget = _resolveUri(
+              relPath,
+              defaultUri,
+              topology.packageName,
+            );
+            if (resolvedTarget != null) {
+              targets.add(resolvedTarget);
+            }
+          }
           for (final config in directive.configurations) {
             final uriStr = config.uri.stringValue;
             if (uriStr != null && uriStr.isNotEmpty) {
@@ -64,12 +77,28 @@ class ZombieEngine {
                 topology.packageName,
               );
               if (resolvedTarget != null) {
-                conditionalTargets
-                    .putIfAbsent(relPath, () => {})
-                    .add(resolvedTarget);
+                targets.add(resolvedTarget);
               }
             }
           }
+          if (targets.isNotEmpty) {
+            final allGroupFiles = {relPath, ...targets};
+            for (final file in allGroupFiles) {
+              conditionalTargets
+                  .putIfAbsent(file, () => {})
+                  .addAll(allGroupFiles.where((f) => f != file));
+            }
+          }
+        }
+      }
+
+      // Collect file-level export directive references.
+      final fileDirectivesExtractor = ElementReferenceExtractor(
+        absolutePackagePath,
+      );
+      for (final directive in unitResult.unit.directives) {
+        if (directive is ExportDirective) {
+          directive.accept(fileDirectivesExtractor);
         }
       }
 
@@ -82,6 +111,10 @@ class ZombieEngine {
           final isNativeRoot = isNativeOrEntryPoint(decl);
           for (final variable in decl.variables.variables) {
             totalDeclarationsCount++;
+            final isVarIgnored =
+                isFileIgnored ||
+                CommentParser.isDeclarationIgnored(variable) ||
+                CommentParser.isDeclarationIgnored(decl);
             final name =
                 variable.declaredFragment?.element.name ?? variable.name.lexeme;
             final id = '$relPath#var#$name#${variable.offset}';
@@ -99,7 +132,7 @@ class ZombieEngine {
               line: lineInfo.lineNumber,
               column: lineInfo.columnNumber,
               element: element,
-              isIgnored: isDeclIgnored,
+              isIgnored: isVarIgnored,
               isTestSupport: isTestSupport,
               isNativeRoot: isNativeRoot,
             );
@@ -122,6 +155,11 @@ class ZombieEngine {
               meta.accept(extractor);
             }
             variable.accept(extractor);
+            if (fileDirectivesExtractor.referencedTopLevelElements.isNotEmpty) {
+              extractor.referencedTopLevelElements.addAll(
+                fileDirectivesExtractor.referencedTopLevelElements,
+              );
+            }
             nodeOutboundElements[node] = extractor.referencedTopLevelElements;
           }
         } else {
@@ -173,6 +211,11 @@ class ZombieEngine {
 
           final extractor = ElementReferenceExtractor(absolutePackagePath);
           decl.accept(extractor);
+          if (fileDirectivesExtractor.referencedTopLevelElements.isNotEmpty) {
+            extractor.referencedTopLevelElements.addAll(
+              fileDirectivesExtractor.referencedTopLevelElements,
+            );
+          }
           nodeOutboundElements[node] = extractor.referencedTopLevelElements;
         }
       }
@@ -211,6 +254,23 @@ class ZombieEngine {
           if (parentNode != null && parentNode.isSealed) {
             sealedSubtypes.putIfAbsent(parentNode.id, () => {}).add(node.id);
           }
+        }
+      }
+    }
+
+    // Connect conditional import reachability edges from importing files.
+    for (final entry in conditionalTargets.entries) {
+      final sourceRelPath = entry.key;
+      final targetRelPaths = entry.value;
+      final sourceNodes = allNodes
+          .where((n) => n.relativeFilePath == sourceRelPath)
+          .toList();
+      final targetNodes = allNodes
+          .where((n) => targetRelPaths.contains(n.relativeFilePath))
+          .toList();
+      for (final sourceNode in sourceNodes) {
+        for (final targetNode in targetNodes) {
+          sourceNode.outgoingTargetIds.add(targetNode.id);
         }
       }
     }
@@ -254,6 +314,19 @@ class ZombieEngine {
         for (final node in allNodes) {
           if (node.relativeFilePath == relPath && !node.name.startsWith('_')) {
             productionRoots.add(node.id);
+          }
+        }
+
+        // Activate conditional import targets of public library files.
+        final targets = conditionalTargets[relPath];
+        if (targets != null) {
+          for (final targetRelPath in targets) {
+            for (final node in allNodes) {
+              if (node.relativeFilePath == targetRelPath &&
+                  !node.name.startsWith('_')) {
+                productionRoots.add(node.id);
+              }
+            }
           }
         }
       }
@@ -310,21 +383,6 @@ class ZombieEngine {
     for (final node in allNodes) {
       if (topology.roleOf(node.relativeFilePath) == FileRole.test) {
         testRoots.add(node.id);
-      }
-    }
-
-    // 3.7 Platform-conditional import branches.
-    for (final entry in conditionalTargets.entries) {
-      final sourceRelPath = entry.key;
-      for (final targetRelPath in entry.value) {
-        for (final node in allNodes) {
-          if (node.relativeFilePath == targetRelPath) {
-            if (topology.roleOf(sourceRelPath) == FileRole.publicLib ||
-                topology.roleOf(sourceRelPath) == FileRole.internalSrc) {
-              productionRoots.add(node.id);
-            }
-          }
-        }
       }
     }
 
@@ -605,9 +663,17 @@ class _TestCallSiteVisitor extends RecursiveAstVisitor<void> {
   @override
   void visitMethodInvocation(MethodInvocation node) {
     final methodName = node.methodName.name;
-    if (methodName == 'test' ||
+    final isTestFn =
+        methodName == 'test' ||
         methodName == 'testWidgets' ||
-        methodName == 'solo_test') {
+        methodName == 'solo_test';
+    final isFixtureFn =
+        methodName == 'setUp' ||
+        methodName == 'setUpAll' ||
+        methodName == 'tearDown' ||
+        methodName == 'tearDownAll';
+
+    if (isTestFn || isFixtureFn) {
       final loc = lineInfo.getLocation(node.offset);
       String? description;
       if (node.argumentList.arguments.isNotEmpty) {
@@ -618,6 +684,7 @@ class _TestCallSiteVisitor extends RecursiveAstVisitor<void> {
           description = firstArg.stringValue;
         }
       }
+      description ??= isFixtureFn ? methodName : null;
 
       final extractor = ElementReferenceExtractor(packageRoot);
       node.accept(extractor);

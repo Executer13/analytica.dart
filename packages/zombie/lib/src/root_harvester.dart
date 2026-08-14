@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:analytica/sdk_discovery.dart';
 import 'package:path/path.dart' as p;
+import 'package:yaml/yaml.dart';
 
 import 'models.dart';
 
@@ -289,50 +290,37 @@ class RootHarvester {
 
     try {
       final content = buildYaml.readAsStringSync();
+      final doc = loadYaml(content);
       final results = <String>{};
 
-      // Match inline syntax: builder_factories: ["foo", "bar"]
-      final inlineMatches = RegExp(
-        r'builder_factories:\s*\[([^\]]+)\]',
-      ).allMatches(content);
-      for (final match in inlineMatches) {
-        final rawList = match.group(1);
-        if (rawList != null) {
-          for (final item in rawList.split(',')) {
-            final cleaned = item.replaceAll(RegExp(r'''['"\s]'''), '');
-            if (cleaned.isNotEmpty) results.add(cleaned);
+      void extractFromNode(dynamic node) {
+        if (node is Map) {
+          for (final entry in node.entries) {
+            if (entry.key?.toString() == 'builder_factories') {
+              final val = entry.value;
+              if (val is List) {
+                for (final item in val) {
+                  if (item != null) {
+                    final str = item.toString().trim();
+                    if (str.isNotEmpty) results.add(str);
+                  }
+                }
+              } else if (val is String) {
+                final str = val.trim();
+                if (str.isNotEmpty) results.add(str);
+              }
+            } else {
+              extractFromNode(entry.value);
+            }
+          }
+        } else if (node is List) {
+          for (final item in node) {
+            extractFromNode(item);
           }
         }
       }
 
-      // Match multi-line list syntax:
-      // builder_factories:
-      //   - foo
-      //   - bar
-      final multiLineBlocks = RegExp(
-        r'builder_factories:\s*\n((?:\s*-\s*["'
-        "'"
-        r']?[a-zA-Z0-9_]+["'
-        "'"
-        r']?\s*\n?)+)',
-      ).allMatches(content);
-      for (final block in multiLineBlocks) {
-        final blockContent = block.group(1);
-        if (blockContent != null) {
-          final itemMatches = RegExp(
-            r'-\s*["'
-            "'"
-            r']?([a-zA-Z0-9_]+)["'
-            "'"
-            r']?',
-          ).allMatches(blockContent);
-          for (final item in itemMatches) {
-            final name = item.group(1);
-            if (name != null && name.isNotEmpty) results.add(name);
-          }
-        }
-      }
-
+      extractFromNode(doc);
       return results;
     } catch (_) {
       return const {};

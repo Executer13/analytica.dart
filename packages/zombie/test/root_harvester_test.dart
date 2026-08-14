@@ -187,5 +187,41 @@ targets:
       check(topology.builderFactoryNames).contains('customBuilderOne');
       check(topology.builderFactoryNames).contains('customBuilderTwo');
     });
+
+    test(
+      'extracts YAML builder_factories with comments and blank lines (VULN-10)',
+      () async {
+        await d.dir('commented_build_pkg', [
+          packageConfig('commented_build_pkg'),
+          d.file('pubspec.yaml', 'name: commented_build_pkg\n'),
+          d.file('build.yaml', '''
+targets:
+  \$default:
+    builders:
+      commented_build_pkg|builder:
+        # Configuration for builder factories
+        builder_factories:
+          # First factory
+          - factoryWithComment
+
+          # Second factory after blank lines
+          - "factoryQuoted"
+          - 'factorySingleQuoted'
+'''),
+          d.dir('lib', [d.file('main.dart', 'void foo() {}')]),
+        ]).create();
+
+        final options = ZombieOptions(
+          packagePath: d.path('commented_build_pkg'),
+        );
+
+        final harvester = RootHarvester(options);
+        final topology = harvester.harvestTopology();
+
+        check(topology.builderFactoryNames).contains('factoryWithComment');
+        check(topology.builderFactoryNames).contains('factoryQuoted');
+        check(topology.builderFactoryNames).contains('factorySingleQuoted');
+      },
+    );
   });
 }

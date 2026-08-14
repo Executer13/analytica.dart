@@ -27,6 +27,12 @@ class ElementReferenceExtractor extends RecursiveAstVisitor<void> {
 
   void _checkElement(Element? elem) {
     if (elem == null) return;
+    if (elem is MultiplyDefinedElement) {
+      for (final conflicting in elem.conflictingElements) {
+        _checkElement(conflicting);
+      }
+      return;
+    }
 
     // Check if element belongs to target package.
     final sourcePath =
@@ -123,5 +129,46 @@ class ElementReferenceExtractor extends RecursiveAstVisitor<void> {
   void visitRelationalPattern(RelationalPattern node) {
     _checkElement(node.element);
     super.visitRelationalPattern(node);
+  }
+
+  @override
+  void visitImportDirective(ImportDirective node) {
+    // Skip combinators (show/hide) so unused imported names in import
+    // directives do not falsely count as usage references.
+    for (final meta in node.metadata) {
+      meta.accept(this);
+    }
+  }
+
+  @override
+  void visitExportDirective(ExportDirective node) {
+    final exportedLibrary = node.libraryExport?.exportedLibrary;
+    if (exportedLibrary != null) {
+      final definedNames = exportedLibrary.exportNamespace.definedNames2;
+      var availableNames = Map<String, Element?>.from(definedNames);
+
+      for (final combinator in node.combinators) {
+        if (combinator is ShowCombinator) {
+          final shown = combinator.shownNames.map((id) => id.name).toSet();
+          availableNames.removeWhere((name, _) => !shown.contains(name));
+          for (final id in combinator.shownNames) {
+            if (!availableNames.containsKey(id.name) && id.element != null) {
+              availableNames[id.name] = id.element;
+            }
+          }
+        } else if (combinator is HideCombinator) {
+          final hidden = combinator.hiddenNames.map((id) => id.name).toSet();
+          availableNames.removeWhere((name, _) => hidden.contains(name));
+        }
+      }
+
+      for (final elem in availableNames.values) {
+        _checkElement(elem);
+      }
+    }
+
+    for (final meta in node.metadata) {
+      meta.accept(this);
+    }
   }
 }

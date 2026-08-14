@@ -1182,5 +1182,391 @@ class DeadItemModel {}
       check(report.pureZombiesFound).equals(1);
       check(report.zombies.single.name).equals('DeadItemModel');
     });
+
+    test('strict @pragma entrypoint matching preserves only entrypoint '
+        'pragmas (VULN-5)', () async {
+      await d.dir('pragma_strict_pkg', [
+        packageConfig('pragma_strict_pkg'),
+        d.file('pubspec.yaml', '''
+name: pragma_strict_pkg
+environment:
+  sdk: '^3.5.0'
+'''),
+        d.dir('lib', [
+          d.file('pragma_strict_pkg.dart', 'class PublicApi {}'),
+          d.dir('src', [
+            d.file('service.dart', '''
+@pragma('vm:entry-point')
+void vmEntryPoint() {}
+
+@pragma('vm:isolate-unsendable')
+class IsolateUnsendableClass {}
+
+@pragma('vm:prefer-inline')
+void preferInlineDead() {}
+
+@pragma('dart2js:noInline')
+void noInlineDead() {}
+'''),
+          ]),
+        ]),
+      ]).create();
+
+      final report = await analyzePackage(d.path('pragma_strict_pkg'));
+      check(report.pureZombiesFound).equals(2);
+      final deadNames = report.zombies.map((z) => z.name).toSet();
+      check(deadNames).contains('preferInlineDead');
+      check(deadNames).contains('noInlineDead');
+      check(deadNames).not((it) => it.contains('vmEntryPoint'));
+      check(deadNames).not((it) => it.contains('IsolateUnsendableClass'));
+    });
+
+    test('dynamic conditional import reachability does not seed dead '
+        'internal files (VULN-6)', () async {
+      await d.dir('dyn_conditional_pkg', [
+        packageConfig('dyn_conditional_pkg'),
+        d.file('pubspec.yaml', '''
+name: dyn_conditional_pkg
+environment:
+  sdk: '^3.5.0'
+'''),
+        d.dir('lib', [
+          d.file('dyn_conditional_pkg.dart', 'export "src/live.dart";'),
+          d.dir('src', [
+            d.file('live.dart', '''
+import 'live_stub.dart' if (dart.library.io) 'live_io.dart';
+
+class LiveService {
+  void doWork() {}
+}
+'''),
+            d.file('live_stub.dart', 'class LiveStubClass {}'),
+            d.file('live_io.dart', 'class LiveIoClass {}'),
+            d.file('dead_feature.dart', '''
+import 'dead_stub.dart' if (dart.library.io) 'dead_io.dart';
+
+class DeadFeatureService {}
+'''),
+            d.file('dead_stub.dart', 'class DeadStubClass {}'),
+            d.file('dead_io.dart', 'class DeadIoClass {}'),
+          ]),
+        ]),
+      ]).create();
+
+      final report = await analyzePackage(d.path('dyn_conditional_pkg'));
+      // LiveService is live, and connects to live_io/live_stub.
+      // dead_feature is dead, so dead_stub and dead_io should also be dead!
+      final deadNames = report.zombies.map((z) => z.name).toSet();
+      check(deadNames).contains('DeadFeatureService');
+      check(deadNames).contains('DeadStubClass');
+      check(deadNames).contains('DeadIoClass');
+      check(deadNames).not((it) => it.contains('LiveService'));
+      check(deadNames).not((it) => it.contains('LiveStubClass'));
+      check(deadNames).not((it) => it.contains('LiveIoClass'));
+    });
+
+    test('gRPC *Stub naming is not test support and is detected as '
+        'tested zombie (VULN-8)', () async {
+      await d.dir('grpc_stub_pkg', [
+        packageConfig('grpc_stub_pkg'),
+        d.file('pubspec.yaml', '''
+name: grpc_stub_pkg
+environment:
+  sdk: '^3.5.0'
+'''),
+        d.dir('lib', [
+          d.file('grpc_stub_pkg.dart', 'export "src/live.dart";'),
+          d.dir('src', [
+            d.file('live.dart', 'class LiveApi {}'),
+            d.file('grpc_client.dart', '''
+import 'package:meta/meta.dart';
+
+class PaymentServiceStub {
+  void sendPayment() {}
+}
+
+class MockPaymentClient {
+  void mockPayment() {}
+}
+
+@visibleForTesting
+class TestingHook {
+  void inspectState() {}
+}
+'''),
+          ]),
+        ]),
+        d.dir('test', [
+          d.file('client_test.dart', '''
+import 'package:grpc_stub_pkg/src/grpc_client.dart';
+
+void test(String desc, Function body) {}
+
+void main() {
+  test('tests grpc client and mock', () {
+    final stub = PaymentServiceStub();
+    stub.sendPayment();
+    final mock = MockPaymentClient();
+    mock.mockPayment();
+    final hook = TestingHook();
+    hook.inspectState();
+  });
+}
+'''),
+        ]),
+      ]).create();
+
+      final report = await analyzePackage(d.path('grpc_stub_pkg'));
+      // MockPaymentClient and TestingHook are preserved test support.
+      // PaymentServiceStub is NOT test support and is flagged as a zombie!
+      check(report.testedZombiesFound).equals(1);
+      final zombie = report.zombies.single;
+      check(zombie.name).equals('PaymentServiceStub');
+      check(zombie.classification).equals(ZombieClassification.testedZombie);
+      check(zombie.orphanTests).isNotNull();
+      check(zombie.orphanTests!.first.file).equals('test/client_test.dart');
+    });
+
+    test('build.yaml with comments and blank lines preserves builder '
+        'factories (VULN-10)', () async {
+      await d.dir('yaml_build_pkg', [
+        packageConfig('yaml_build_pkg'),
+        d.file('pubspec.yaml', '''
+name: yaml_build_pkg
+environment:
+  sdk: '^3.5.0'
+'''),
+        d.file('build.yaml', '''
+targets:
+  \$default:
+    builders:
+      yaml_build_pkg|builder:
+        # Factories list:
+        builder_factories:
+          # Main builder
+          - customBuilderFactory
+
+          # Secondary
+          - "quotedBuilderFactory"
+'''),
+        d.dir('lib', [
+          d.file('yaml_build_pkg.dart', 'export "src/live.dart";'),
+          d.dir('src', [
+            d.file('live.dart', 'class LiveMain {}'),
+            d.file('builder.dart', '''
+void customBuilderFactory() {}
+void quotedBuilderFactory() {}
+void deadBuilderFactory() {}
+'''),
+          ]),
+        ]),
+      ]).create();
+
+      final report = await analyzePackage(d.path('yaml_build_pkg'));
+      check(report.pureZombiesFound).equals(1);
+      check(report.zombies.single.name).equals('deadBuilderFactory');
+    });
+
+    test('multi-variable variable-level suppression respects '
+        '// zombie:ignore per variable (VULN-11)', () async {
+      await d.dir('multivar_ignore_pkg', [
+        packageConfig('multivar_ignore_pkg'),
+        d.file('pubspec.yaml', '''
+name: multivar_ignore_pkg
+environment:
+  sdk: '^3.5.0'
+'''),
+        d.dir('lib', [
+          d.file('multivar_ignore_pkg.dart', 'export "src/live.dart";'),
+          d.dir('src', [
+            d.file('live.dart', 'class LiveClass {}'),
+            d.file('vars.dart', '''
+late int varA,
+    // zombie:ignore
+    varB,
+    varC;
+'''),
+          ]),
+        ]),
+      ]).create();
+
+      final report = await analyzePackage(d.path('multivar_ignore_pkg'));
+      check(report.pureZombiesFound).equals(2);
+      final deadNames = report.zombies.map((z) => z.name).toSet();
+      check(deadNames).contains('varA');
+      check(deadNames).contains('varC');
+      check(deadNames).not((it) => it.contains('varB'));
+    });
+
+    test('test harness fixtures (setUp/tearDown) are recorded as orphan '
+        'test sites (VULN-12)', () async {
+      await d.dir('fixture_orphan_pkg', [
+        packageConfig('fixture_orphan_pkg'),
+        d.file('pubspec.yaml', '''
+name: fixture_orphan_pkg
+environment:
+  sdk: '^3.5.0'
+'''),
+        d.dir('lib', [
+          d.file('fixture_orphan_pkg.dart', 'export "src/live.dart";'),
+          d.dir('src', [
+            d.file('live.dart', 'class LiveService {}'),
+            d.file('dead_helper.dart', '''
+class DeadFixtureHelper {
+  static void setupEnv() {}
+  static void teardownEnv() {}
+}
+'''),
+          ]),
+        ]),
+        d.dir('test', [
+          d.file('helper_test.dart', '''
+import 'package:fixture_orphan_pkg/src/dead_helper.dart';
+
+void setUp(Function callback) {}
+void setUpAll(Function callback) {}
+void tearDown(Function callback) {}
+void tearDownAll(Function callback) {}
+void test(String desc, Function body) {}
+
+void main() {
+  setUpAll(() {
+    DeadFixtureHelper.setupEnv();
+  });
+
+  setUp(() {
+    DeadFixtureHelper.setupEnv();
+  });
+
+  tearDown(() {
+    DeadFixtureHelper.teardownEnv();
+  });
+
+  tearDownAll(() {
+    DeadFixtureHelper.teardownEnv();
+  });
+
+  test('dummy test', () {});
+}
+'''),
+        ]),
+      ]).create();
+
+      final report = await analyzePackage(d.path('fixture_orphan_pkg'));
+      check(report.testedZombiesFound).equals(1);
+      final zombie = report.zombies.single;
+      check(zombie.name).equals('DeadFixtureHelper');
+      check(zombie.classification).equals(ZombieClassification.testedZombie);
+      check(zombie.orphanTests).isNotNull();
+      final descriptions = zombie.orphanTests!
+          .map((t) => t.description)
+          .toSet();
+      check(descriptions).contains('setUpAll');
+      check(descriptions).contains('setUp');
+      check(descriptions).contains('tearDown');
+      check(descriptions).contains('tearDownAll');
+    });
+
+    test('internal sub-library export facade generates outbound reachability '
+        'edges (VULN-13)', () async {
+      await d.dir('facade_pkg', [
+        packageConfig('facade_pkg'),
+        d.file('pubspec.yaml', '''
+name: facade_pkg
+environment:
+  sdk: '^3.5.0'
+'''),
+        d.dir('lib', [
+          d.file('facade_pkg.dart', 'export "src/consumer.dart";'),
+          d.dir('src', [
+            d.file('consumer.dart', '''
+import 'facade.dart';
+
+class Consumer {
+  void useFacade() {
+    FacadeRoot();
+  }
+}
+'''),
+            d.file('facade.dart', '''
+export 'sub_module.dart' show ExportedSubModule, HiddenSubModule hide HiddenSubModule;
+
+class FacadeRoot {}
+'''),
+            d.file('sub_module.dart', '''
+class ExportedSubModule {}
+class HiddenSubModule {}
+class DeadSubModuleItem {}
+'''),
+          ]),
+        ]),
+      ]).create();
+
+      final report = await analyzePackage(d.path('facade_pkg'));
+      check(report.pureZombiesFound).equals(2);
+      final deadNames = report.zombies.map((z) => z.name).toSet();
+      check(deadNames).contains('DeadSubModuleItem');
+      check(deadNames).contains('HiddenSubModule');
+      check(deadNames).not((it) => it.contains('Consumer'));
+      check(deadNames).not((it) => it.contains('FacadeRoot'));
+      check(deadNames).not((it) => it.contains('ExportedSubModule'));
+    });
+
+    test('zero-declaration internal conditional export facade preserves '
+        'platform counterparts (VULN-6 & VULN-13)', () async {
+      await d.dir('zero_decl_facade_pkg', [
+        packageConfig('zero_decl_facade_pkg'),
+        d.file('pubspec.yaml', '''
+name: zero_decl_facade_pkg
+environment:
+  sdk: '^3.5.0'
+'''),
+        d.dir('lib', [
+          d.file('zero_decl_facade_pkg.dart', 'export "src/caller.dart";'),
+          d.dir('src', [
+            d.file('caller.dart', '''
+import 'platform_facade.dart';
+
+class CallerService {
+  void run() {
+    PlatformService().doWork();
+  }
+}
+'''),
+            // Pure facade with zero declarations:
+            d.file('platform_facade.dart', '''
+export 'platform_stub.dart'
+  if (dart.library.io) 'platform_io.dart'
+  if (dart.library.js_interop) 'platform_web.dart';
+'''),
+            d.file('platform_stub.dart', '''
+class PlatformService {
+  void doWork() {}
+}
+'''),
+            d.file('platform_io.dart', '''
+class PlatformService {
+  void doWork() {}
+}
+'''),
+            d.file('platform_web.dart', '''
+class PlatformService {
+  void doWork() {}
+}
+'''),
+            d.file('dead_internal.dart', '''
+class DeadInternalService {}
+'''),
+          ]),
+        ]),
+      ]).create();
+
+      final report = await analyzePackage(d.path('zero_decl_facade_pkg'));
+      check(report.pureZombiesFound).equals(1);
+      check(report.zombies.single.name).equals('DeadInternalService');
+      final deadNames = report.zombies.map((z) => z.name).toSet();
+      check(deadNames).not((it) => it.contains('CallerService'));
+      check(deadNames).not((it) => it.contains('PlatformService'));
+    });
   });
 }

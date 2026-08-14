@@ -171,14 +171,14 @@ void funcF() {}
   });
 
   group('isTestSupportDeclaration', () {
-    test('identifies test support conventions and annotations', () {
-      const source = '''
+    test(
+      'identifies test support conventions and annotations (excluding *Stub)',
+      () {
+        const source = '''
 class FakeService {}
 class MockClient {}
-class StubRepo {}
 class ServiceFake {}
 class ClientMock {}
-class RepoStub {}
 
 @visibleForTesting
 class RealServiceTestingHook {}
@@ -195,25 +195,35 @@ class PascalProtectedHelper {}
 @visibleForOverriding
 class OverridableBase {}
 
+class StubRepo {}
+class RepoStub {}
+class PaymentServiceStub {}
 class NormalService {}
 ''';
-      final parsed = parseString(
-        content: source,
-        featureSet: FeatureSet.latestLanguageVersion(),
-      );
+        final parsed = parseString(
+          content: source,
+          featureSet: FeatureSet.latestLanguageVersion(),
+        );
 
-      for (var i = 0; i <= 10; i++) {
-        final decl = parsed.unit.declarations[i] as AnnotatedNode;
-        check(isTestSupportDeclaration(decl)).isTrue();
-      }
+        // Declarations 0..8 are test support (Fake*, Mock*, @visibleForTesting,
+        // etc.)
+        for (var i = 0; i <= 8; i++) {
+          final decl = parsed.unit.declarations[i] as AnnotatedNode;
+          check(isTestSupportDeclaration(decl)).isTrue();
+        }
 
-      final normal = parsed.unit.declarations[11] as AnnotatedNode;
-      check(isTestSupportDeclaration(normal)).isFalse();
-    });
+        // Declarations 9..12 (StubRepo, RepoStub, PaymentServiceStub,
+        // NormalService) are NOT test support
+        for (var i = 9; i <= 12; i++) {
+          final decl = parsed.unit.declarations[i] as AnnotatedNode;
+          check(isTestSupportDeclaration(decl)).isFalse();
+        }
+      },
+    );
   });
 
   group('isNativeOrEntryPoint', () {
-    test('detects @Native, @native, and @pragma entry points', () {
+    test('detects @Native, @native, and explicit @pragma entry points', () {
       const source = '''
 @Native<void Function()>()
 void nativeFn() {}
@@ -224,6 +234,39 @@ void lowerNativeFn() {}
 @pragma('vm:entry-point')
 void entryPoint() {}
 
+@pragma('vm:isolate-unsendable')
+void unsendableFn() {}
+
+@pragma('vm:entrypoint')
+void legacyEntryPoint() {}
+
+@pragma('wasm:entry-point')
+void wasmEntryPoint() {}
+
+@pragma('wasm:export')
+void wasmExport() {}
+
+@pragma('dyn-module:entry-point')
+void dynModuleEntryPoint() {}
+
+@pragma(name: 'vm:entry-point')
+void namedArgEntryPoint() {}
+
+@pragma('vm:prefer-inline')
+void inlineHint() {}
+
+@pragma('dart2js:noInline')
+void noInlineHint() {}
+
+@pragma('vm:never-inline')
+void neverInlineHint() {}
+
+@pragma('dart2js:tryInline')
+void tryInlineHint() {}
+
+@pragma('vm:exact-result-type')
+void exactResultHint() {}
+
 void normalFn() {}
 ''';
       final parsed = parseString(
@@ -231,18 +274,17 @@ void normalFn() {}
         featureSet: FeatureSet.latestLanguageVersion(),
       );
 
-      check(
-        isNativeOrEntryPoint(parsed.unit.declarations[0] as AnnotatedNode),
-      ).isTrue();
-      check(
-        isNativeOrEntryPoint(parsed.unit.declarations[1] as AnnotatedNode),
-      ).isTrue();
-      check(
-        isNativeOrEntryPoint(parsed.unit.declarations[2] as AnnotatedNode),
-      ).isTrue();
-      check(
-        isNativeOrEntryPoint(parsed.unit.declarations[3] as AnnotatedNode),
-      ).isFalse();
+      // Explicit native / entrypoint pragmas: indices 0..8
+      for (var i = 0; i <= 8; i++) {
+        final decl = parsed.unit.declarations[i] as AnnotatedNode;
+        check(isNativeOrEntryPoint(decl)).isTrue();
+      }
+
+      // Optimization hints & normal functions: indices 9..14
+      for (var i = 9; i <= 14; i++) {
+        final decl = parsed.unit.declarations[i] as AnnotatedNode;
+        check(isNativeOrEntryPoint(decl)).isFalse();
+      }
     });
   });
 

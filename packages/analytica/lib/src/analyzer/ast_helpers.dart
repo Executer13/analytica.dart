@@ -131,16 +131,14 @@ bool hasAnyAnnotation(AnnotatedNode node, Iterable<String> annotationNames) {
 /// conventions.
 ///
 /// Checks for `@visibleForTesting`, `@visibleForOverriding`, `@protected`,
-/// or if [name] starts/ends with `Fake`, `Mock`, or `Stub`.
+/// or if [name] starts/ends with `Fake` or `Mock`.
 bool isTestSupportDeclaration(AnnotatedNode node, [String? name]) {
   final effectiveName = name ?? extractNodeName(node);
   if (effectiveName != null) {
     if (effectiveName.startsWith('Fake') ||
         effectiveName.startsWith('Mock') ||
-        effectiveName.startsWith('Stub') ||
         effectiveName.endsWith('Fake') ||
-        effectiveName.endsWith('Mock') ||
-        effectiveName.endsWith('Stub')) {
+        effectiveName.endsWith('Mock')) {
       return true;
     }
   }
@@ -155,10 +153,61 @@ bool isTestSupportDeclaration(AnnotatedNode node, [String? name]) {
   ]);
 }
 
+const _nativeAnnotationNames = {'Native', 'native'};
+const _entryPointPragmas = {
+  'vm:entry-point',
+  'vm:entrypoint',
+  'vm:isolate-unsendable',
+  'wasm:entry-point',
+  'wasm:export',
+  'dyn-module:entry-point',
+};
+
 /// Checks if an AST node has native or runtime entrypoint annotations
-/// (`@Native` or `@pragma`).
+/// (`@Native`, `@native`, or explicit entrypoint `@pragma` like
+/// `@pragma('vm:entry-point')` or `@pragma('vm:isolate-unsendable')`).
+///
+/// Optimization and inlining pragmas (e.g. `@pragma('vm:prefer-inline')`,
+/// `@pragma('dart2js:noInline')`) are NOT treated as entrypoints.
 bool isNativeOrEntryPoint(AnnotatedNode node) {
-  return hasAnyAnnotation(node, const ['Native', 'native', 'pragma']);
+  for (final meta in node.metadata) {
+    final rawName = meta.name.name;
+    final baseName = rawName.contains('.') ? rawName.split('.').last : rawName;
+    if (_nativeAnnotationNames.contains(baseName)) {
+      return true;
+    }
+    final constructorName = meta.constructorName?.name;
+    if (constructorName != null &&
+        _nativeAnnotationNames.contains(constructorName)) {
+      return true;
+    }
+    if (baseName == 'pragma' || constructorName == 'pragma') {
+      final args = meta.arguments?.arguments;
+      if (args != null && args.isNotEmpty) {
+        final firstArg = args.first;
+        String? pragmaName;
+        if (firstArg is SimpleStringLiteral) {
+          pragmaName = firstArg.value;
+        } else if (firstArg is StringLiteral) {
+          pragmaName = firstArg.stringValue;
+        } else {
+          for (final entity in firstArg.childEntities) {
+            if (entity is SimpleStringLiteral) {
+              pragmaName = entity.value;
+              break;
+            } else if (entity is StringLiteral) {
+              pragmaName = entity.stringValue;
+              break;
+            }
+          }
+        }
+        if (pragmaName != null && _entryPointPragmas.contains(pragmaName)) {
+          return true;
+        }
+      }
+    }
+  }
+  return false;
 }
 
 /// Whether [relativePath] sits inside a directory that should never be
