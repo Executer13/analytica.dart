@@ -18,60 +18,98 @@ Phase 1 operates at the **Top-Level AST Declaration** granularity (`CompilationU
   * Extensions (`ExtensionDeclaration`)
   * Extension types (`ExtensionTypeDeclaration`)
   * Type aliases / typedefs (`TypeAlias`)
-  * Top-level variables (`TopLevelVariableDeclaration`)
+  * Top-level variables and split accessors (`TopLevelVariableDeclaration`, `get`/`set`)
 * **Explicitly Deferred to Phase 2/3**:
   * Internal methods, fields, and constructors inside reachable classes.
   * Individual enum constants (`EnumConstantDeclaration`) inside reachable enums.
 
 ---
 
-## 2. Phase 1 Classification Matrix
+## 2. Directory Roles & Root Invariants
+
+`pkg:zombie` partitions directories into **Roots (Consumers)** vs **Analysis Targets (Candidates)**:
 
 <!-- mdformat off(prevent table wrapping) -->
-| Scenario / Code Pattern | Location | Exported in `lib/*.dart`? | Reachable from `lib/`, `bin/`, `tool/`, `example/`? | Reachable from `test/`? | Classification | Recommended Action |
-| :--- | :--- | :---: | :---: | :---: | :--- | :--- |
-| **Unexported Top-Level Declaration** (class, function, enum, mixin, typedef) | `lib/src/` | ❌ No | ❌ No | ❌ No | **Pure Zombie** | Delete entire declaration |
-| **Tested Zombie (Zero Production Uses, Test-Only)** | `lib/src/` | ❌ No | ❌ No | ✅ Yes | **Tested Zombie** | **Delete declaration AND remove orphan test blocks** |
-| **Exported Top-Level Declaration** | `lib/` or `lib/src/` | ✅ Yes | ❌ No | ❌ No | **Public API** (Not Zombie) | Preserve (external consumer contract) |
-| **Tool / Example Only Usage** | `lib/src/` | ❌ No | ✅ Yes | N/A | **Tool/Example Live** | Preserve |
-| **Unused Top-Level Declaration in `tool/` or `example/`** | `tool/` or `example/` | ❌ No | ❌ No | ❌ No | **Zombie** | Delete entire declaration |
-| **Annotated Entrypoint** (`@pragma('vm:entry-point')`, `@Preview`, `@JS`) | Any | ❌ No | ❌ No | ❌ No | **Exempt / Alive** | Preserve |
-| **Suppressed via Custom Comment** | Any | ❌ No | ❌ No | ❌ No | **Ignored** | Skip |
+| Directory | Role in Graph | Deletion Target? | Invariant & Reachability Rule |
+| :--- | :--- | :---: | :--- |
+| **`lib/**`** (non-`src`) | **Public API Root** | ❌ No | In open packages, all exported symbols in `exportNamespace` are **Public Roots**. In private apps (`publish_to: none`), unreferenced top-level files can be flagged. |
+| **`lib/src/**`** | **Internal Source Target** | ✅ Yes | Declarations are live **only** if reachable from public exports, executables, tests, tools, or examples. |
+| **`bin/**/*.dart`** | **Executable Root** | ✅ Yes (Internal) | `main()` functions are roots. Unused top-level helper declarations in `bin/` are deletion candidates. |
+| **`test/**`, `integration_test/**`** | **Test Consumer Root** | ❌ No | Test `main()` functions are test roots. Test files are never deletion targets for pure zombies. |
+| **`example/**`** | **Demonstration Root** | ❌ **No (Immune)** | **Demonstration Invariant**: Code in `example/` is shared on pub.dev for human documentation. It is a consumer root for `lib/src/` and **never a deletion target** by default (`--example-mode=demonstration`). |
+| **`tool/**`, `benchmark/**`, `web/**`** | **Auxiliary Consumer Root** | ✅ Yes (Internal) | `main()` functions are roots. Unused internal utilities in `tool/` are deletion candidates. |
+| **`*.g.dart`, `*.freezed.dart`** | **Generated Code (Exempt)** | ❌ No | Generated files are never modified or flagged directly. |
 <!-- mdformat on -->
 
 ---
 
-## 3. Dual-Pass Reachability Engine
+## 3. Phase 1 Classification Matrix
+
+<!-- mdformat off(prevent table wrapping) -->
+| Code Pattern / Declaration | Location | Target Scope | Reachable Production? | Reachable Tests? | Classification | Recommended Action |
+| :--- | :--- | :--- | :---: | :---: | :--- | :--- |
+| **Unexported Top-Level Declaration** | `lib/src/` | Any | ❌ No | ❌ No | **Pure Zombie** | Delete declaration |
+| **Tested-Only Isolated Feature** | `lib/src/` | Any | ❌ No | ✅ Yes (Sole Target) | **Tested Zombie** | Delete declaration + delete orphan test block |
+| **Co-Invoked Tested Declaration** | `lib/src/` | Any | ❌ No | ✅ Yes (Shared Test) | **Co-Invoked Zombie** | Flag `co_invoked_test_hazard` (manual refactor) |
+| **Test Support / Fixture / Hook** (`@visibleForTesting`, `Fake*`) | `lib/src/` | Any | ❌ No | ✅ Yes | **Test Support** | Preserve (active test harness) |
+| **Exported Symbol in `exportNamespace`** | `lib/**` (excl. `src`) | Open Package | N/A | N/A | **Public API** | Preserve (external consumer contract) |
+| **Direct Subtype of Live `sealed` Class** | `lib/src/` | Any | (Hierarchy) | N/A | **Sealed Hierarchy** | Preserve (exhaustiveness guarantee) |
+| **Dangling Export in Private App** (`publish_to: none`) | `lib/*.dart` | Private App | ❌ No | ❌ No | **App Zombie** | Delete unreferenced export |
+| **Any Declaration in `example/`** | `example/` | Single/Multi | N/A | N/A | **Demonstration Root** | Preserve (pub.dev documentation) |
+| **Config Entrypoint** (`build.yaml`, `dartPluginClass`) | `lib/` or `lib/src/` | Any | N/A | N/A | **Config Root** | Preserve |
+| **Platform-Conditional Branch** (`if (dart.library.*)`) | `lib/src/` | Any | (Via Web/IO) | N/A | **Platform Live** | Preserve |
+| **Foreign / Native Callback** (`@Native`, `@pragma`) | Any | Any | N/A | N/A | **Native Root** | Preserve |
+| **Suppressed via Custom Comment** | Any | Any | N/A | N/A | **Ignored** | Skip (`// zombie:ignore`) |
+<!-- mdformat on -->
+
+---
+
+## 4. Multi-Stage Reachability Engine Pipeline
 
 ```mermaid
 flowchart TD
-    subgraph Pass1 ["Pass 1: Production Reachability Graph"]
-        P_Roots["Roots: lib/*.dart exports, bin/*.dart, tool/*.dart, example/*.dart"]
-        P_BFS["BFS Graph Traversal"]
-        P_Live["Set<Declaration> PRODUCTION_LIVE"]
+    subgraph Stage1 ["Stage 1: Root Harvester"]
+        R1["Public API: lib/** (non-src) + exportNamespace"]
+        R2["Executables: bin/**/*.dart main()"]
+        R3["Examples: example/**/*.dart (Demonstration Roots)"]
+        R4["Config Roots: build.yaml factories & pubspec plugin classes"]
+        R5["Native Roots: @Native & @pragma('vm:entry-point')"]
+        R6["Test Entrypoints: test/**, integration_test/**, test_driver/** main()"]
     end
 
-    subgraph Pass2 ["Pass 2: Test Reachability Graph"]
-        T_Roots["Roots: test/**/*_test.dart main()"]
-        T_BFS["BFS Graph Traversal"]
-        T_Live["Set<Declaration> TEST_REACHABLE"]
+    subgraph Stage2 ["Stage 2: AST & Conditional Edge Extraction"]
+        E1["Resolved Element2 Call & Type Graph"]
+        E2["Conditional URI Union: if (dart.library.*) targets"]
+        E3["Filter Out: References inside Comment AST nodes"]
+        E4["Filter Out: Generated files (*.g.dart) as targets"]
+        E5["Sealed Class Hierarchy Subtype Linker"]
     end
 
-    subgraph Classification ["Phase 1 Top-Level Classification"]
-        D1{"In PRODUCTION_LIVE?"}
-        D1 -->|Yes| Live["ALIVE (Production Code)"]
-        D1 -->|No| D2{"In TEST_REACHABLE?"}
-        D2 -->|No| PureZombie["🧟 PURE ZOMBIE (Delete declaration)"]
-        D2 -->|Yes| TestedZombie["🧟 TESTED ZOMBIE (Delete declaration + Delete orphan tests)"]
+    subgraph Stage3 ["Stage 3: Production & Test Graph BFS"]
+        P_BFS["Production BFS Traversal (R1..R5 + E2) -> PRODUCTION_LIVE"]
+        T_BFS["Test BFS Traversal (R6 + E2) -> TEST_REACHABLE"]
     end
 
-    Pass1 --> D1
-    Pass2 --> D2
+    subgraph Stage4 ["Stage 4: Cascading Classification & Hazard Detection"]
+        Classify{"Classification Engine"}
+        P_BFS --> Classify
+        T_BFS --> Classify
+        Classify --> Pure["Pure Zombie (Safe to Delete)"]
+        Classify --> Tested["Tested Zombie (Isolated Test Deletion)"]
+        Classify --> CoInvoked["Co-Invoked Hazard (Manual Refactor Required)"]
+        Classify --> TestSupport["Test Support Hook / Fixture (Preserved)"]
+        Classify --> SealedLive["Sealed Subtype (Preserved)"]
+        Classify --> Live["Live Production Code"]
+    end
+
+    Stage1 --> Stage2
+    Stage2 --> Stage3
+    Stage3 --> Stage4
 ```
 
 ---
 
-## 4. Phase 1 Concrete Examples & Test Cases
+## 5. Concrete Examples & Test Cases
 
 ### Example 1: Dead Unexported Top-Level Function (Pure Zombie)
 ```dart
@@ -83,67 +121,86 @@ String calculateLegacyHash(String input) => input.trim(); // 🧟 PURE ZOMBIE
 
 ---
 
-### Example 2: Dead Unexported Top-Level Class (Pure Zombie)
-```dart
-// lib/src/internal_cache.dart (NOT exported in lib/my_package.dart)
-class InternalCache {
-  final Map<String, dynamic> _store = {};
-  void put(String k, dynamic v) => _store[k] = v;
-}
-```
-* **Analysis**: `InternalCache` has 0 type, constructor, or identifier references across all files.
-* **Remediation**: Delete the entire `InternalCache` class.
-
----
-
-### Example 3: Tested Zombie (Dead Top-Level Class + Dead Unit Test)
+### Example 2: Tested Zombie vs Co-Invoked Test Hazard
+#### Scenario A: Isolated Tested Zombie (Safe to Delete Test Block)
 ```dart
 // lib/src/old_parser.dart (NOT exported in lib/my_package.dart)
 class OldParser {
-  String parse(String raw) => raw.toLowerCase(); // 🧟 TESTED ZOMBIE: 0 production callers!
+  String parse(String raw) => raw.toLowerCase(); // 🧟 TESTED ZOMBIE
 }
 
 // test/old_parser_test.dart
 void main() {
   test('OldParser parses correctly', () {
     final parser = OldParser();
-    expect(parser.parse('FOO'), 'foo'); // ⚠️ ORPHAN TEST
+    expect(parser.parse('FOO'), 'foo'); // ⚠️ Sole reference in test block
   });
 }
 ```
-* **Analysis**: `OldParser` is unexported and has 0 callers in `lib/`, `bin/`, `tool/`, `example/`. It is invoked only in `test/old_parser_test.dart`.
-* **Remediation**:
-  1. Flag `OldParser` as `tested_zombie`.
-  2. Identify orphan test call site: `test/old_parser_test.dart:3:3` (`test('OldParser parses correctly', ...)`).
-  3. Delete `OldParser` from `lib/src/old_parser.dart` AND delete the corresponding `test(...)` block from `test/old_parser_test.dart`.
+* **Remediation**: Delete `OldParser` and delete the orphan `test('OldParser parses correctly', ...)` block.
 
----
-
-### Example 4: Exported Top-Level Class (Protected Public API)
+#### Scenario B: Co-Invoked Test Hazard (Requires Manual Refactoring)
 ```dart
-// lib/src/client.dart (Exported via `export 'src/client.dart'` in lib/my_package.dart)
-class MyClient {
-  void connect() {}
+// test/integration_pipeline_test.dart
+void main() {
+  test('pipeline formats output', () {
+    final intermediate = OldParser.parse('FOO'); // 🧟 Dead helper
+    final result = LivePipeline.process(intermediate); // 🟢 LIVE production class
+    expect(result.isValid, isTrue);
+  });
 }
 ```
-* **Analysis**: In an open package, `MyClient` is re-exported at `lib/my_package.dart`.
-* **Remediation**: Do NOT flag as Zombie.
+* **Remediation**: Flag as `co_invoked_test_hazard`. Do **NOT** delete the test block automatically; prompt developer to refactor `LivePipeline` test input.
 
 ---
 
-### Example 5: Tool / Example Only Usage (Tool-Live)
+### Example 3: Dart 3 Sealed Class Hierarchy (Preserved for Exhaustiveness)
 ```dart
-// lib/src/generator_config.dart (NOT exported in lib/my_package.dart)
-class GeneratorConfig {
-  static const defaultOutputDir = 'build/generated'; // Used ONLY in tool/generate.dart
+// lib/src/ast_nodes.dart
+sealed class AstNode {}
+class LiteralNode extends AstNode {}
+class IdentifierNode extends AstNode {}
+class UnusedCommentNode extends AstNode {} // 🛡️ Uninstantiated, but needed for switch exhaustiveness!
+```
+* **Analysis**: `UnusedCommentNode` is a direct subtype of `AstNode`. Removing it would break exhaustive `switch (node)` pattern matches.
+* **Remediation**: Preserve (Sealed Hierarchy).
+
+---
+
+### Example 4: Pub.dev Example Code (Demonstration Root)
+```dart
+// example/example.dart (Shared publicly on pub.dev)
+import 'package:my_pkg/my_pkg.dart';
+
+// 💡 Illustrative data model for human readers on pub.dev:
+class UserProfile {
+  final String username;
+  UserProfile(this.username);
+}
+
+void main() {
+  final client = MyPkgClient();
+  client.init();
+  // Note: UserProfile is not instantiated in main()!
 }
 ```
-* **Analysis**: Unexported, but referenced by a script in `tool/generate.dart`.
-* **Remediation**: Preserve (Tool-Live).
+* **Analysis**: `UserProfile` is in `example/example.dart`.
+* **Remediation**: Preserve (Demonstration Root).
 
 ---
 
-## 5. Custom Comment Suppression Syntax
+### Example 5: Platform-Conditional Branch (Platform Live)
+```dart
+// lib/src/platform.dart
+export 'src/platform_io.dart'
+  if (dart.library.js_interop) 'src/platform_web.dart';
+```
+* **Analysis**: On a VM analysis host, `platform_web.dart` is conditionally imported for web targets.
+* **Remediation**: The AST parser unions conditional branches; declarations in `platform_web.dart` are preserved as Platform Live.
+
+---
+
+## 6. Custom Comment Suppression Syntax
 
 > [!IMPORTANT]
 > **Anti-Collision Rule**: We must **NOT** co-opt Dart's standard `// ignore: ...` or `// ignore_for_file: ...` syntax.

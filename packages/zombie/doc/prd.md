@@ -5,6 +5,7 @@
 **Mission**: Provide a fast, token-efficient, deterministic tool to detect and eliminate **"zombie code"** across Dart packages.
 
 For the exact classification rules, definitions, and code examples, see [taxonomy.md](taxonomy.md).
+For Phase 2/3 internal class members and enum pruning, see [taxonomy_phase2.md](taxonomy_phase2.md).
 
 ---
 
@@ -39,13 +40,12 @@ flowchart LR
 <!-- mdformat off(prevent table wrapping) -->
 | Directory | Role in Reachability Graph | Root Definition & Invariant |
 | :--- | :--- | :--- |
-| **`lib/*.dart`** | **Public API Interface** | All exported symbols (`libraryElement.exportNamespace.definedNames`) are **Public API Roots**. |
-| **`lib/src/`** | **Internal Implementation** | Not roots. Declarations are live **only** if reached from public exports, executables, tests, tools, or examples. |
-| **`bin/*.dart`** | **CLIs & Executables** | Top-level `main()` functions are **Executable Roots**. |
-| **`test/`** | **Unit & Integration Tests** | Test files containing `main()` are **Test Roots**. |
-| **`example/`** | **Sample Apps & Demos** | Sample scripts/apps containing `main()` are **Example Roots**. |
-| **`tool/`** | **Developer Utilities & Codegen** | Build/dev scripts containing `main()` are **Tool Roots**. |
-| **`benchmark/` / `web/`** | **Performance & Web Entrypoints** | Entrypoint scripts containing `main()` are **Auxiliary Roots**. |
+| **`lib/**`** (non-`src`) | **Public API Interface** | All exported symbols (`libraryElement.exportNamespace.definedNames`) are **Public API Roots**. |
+| **`lib/src/**`** | **Internal Implementation Target** | Declarations are live **only** if reached from public exports, executables, tests, tools, or examples. |
+| **`bin/**/*.dart`** | **CLIs & Executables** | Top-level `main()` functions are **Executable Roots**. |
+| **`test/**`, `integration_test/**`** | **Unit & Integration Tests** | Test files containing `main()` are **Test Roots**. |
+| **`example/**`** | **Sample Apps & Pub.dev Demos** | **Demonstration Roots**: Immune from deletion by default (`--example-mode=demonstration`). |
+| **`tool/**`, `benchmark/**`, `web/**`** | **Utilities & Web Entrypoints** | Entrypoint scripts containing `main()` are **Auxiliary Roots**. |
 <!-- mdformat on -->
 
 ---
@@ -55,7 +55,7 @@ flowchart LR
 <!-- mdformat off(prevent table wrapping) -->
 | Priority | Target Scenario | Scope Description | Analysis Boundaries |
 | :--- | :--- | :--- | :--- |
-| **P0 (MVP / Core)** | **Single Leaf Package** | Directory containing a single `pubspec.yaml`. | Analyzes reachability from public export roots (`lib/*.dart`) and auxiliary roots (`bin/`, `test/`, `example/`, `tool/`) down to `lib/src/`. |
+| **P0 (MVP / Core)** | **Single Leaf Package** | Directory containing a single `pubspec.yaml`. | Analyzes reachability from public export roots (`lib/**`), executables (`bin/`), tests (`test/`), examples (`example/`), and tools (`tool/`) down to `lib/src/`. |
 | **P1 (Workspace Batch)** | **Workspace Batch Mode** | Iterates over all packages defined in a `pubspec.yaml` `workspace: [...]` or Melos. | Runs P0 analysis on each member package independently in a single command invocation. |
 | **P2 (Workspace Graph)** | **Closed Workspace Cross-Package Analysis** | Treats the entire workspace/monorepo as a single closed universe. | Analyzes whether exported symbols in internal shared/utility packages (e.g. `packages/shared_utils`) are actually consumed by any sibling package in the workspace. |
 | **Non-Goal** | **Single File Analysis** | Running on an isolated `foo.dart`. | **Excluded**: Single-file scope cannot soundly prove package-wide reachability. |
@@ -67,7 +67,7 @@ flowchart LR
 ## 4. Output Data Models
 
 ### 4.1 JSON Output Model (Agent & Tooling)
-Designed for low token overhead and actionable precision, including orphan test sites:
+Designed for low token overhead and actionable precision, including co-invoked hazard detection:
 
 ```json
 {
@@ -76,17 +76,18 @@ Designed for low token overhead and actionable precision, including orphan test 
   "summary": {
     "total_declarations": 142,
     "pure_zombies_found": 2,
-    "tested_zombies_found": 1
+    "tested_zombies_found": 1,
+    "co_invoked_hazards_found": 1
   },
   "zombies": [
     {
-      "id": "MyHelperClass.unusedMethod",
-      "name": "unusedMethod",
-      "kind": "method",
-      "file": "lib/src/helpers/my_helper.dart",
+      "id": "calculateLegacyHash",
+      "name": "calculateLegacyHash",
+      "kind": "function",
+      "file": "lib/src/utils.dart",
       "line": 45,
-      "column": 3,
-      "length": 12,
+      "column": 1,
+      "length": 19,
       "classification": "pure_zombie",
       "suggested_action": "delete"
     },
@@ -105,7 +106,8 @@ Designed for low token overhead and actionable precision, including orphan test 
           "file": "test/old_parser_test.dart",
           "line": 3,
           "column": 3,
-          "description": "OldParser parses correctly"
+          "description": "OldParser parses correctly",
+          "co_invoked_hazard": false
         }
       ]
     }
@@ -118,6 +120,7 @@ Designed for low token overhead and actionable precision, including orphan test 
 * Categorized tables:
   * **Pure Zombies** (Safe to delete).
   * **Tested Zombies & Orphan Tests** (Delete implementation + delete associated unit test blocks).
+  * **Co-Invoked Test Hazards** (Require manual refactoring).
 
 ---
 
@@ -126,15 +129,25 @@ Designed for low token overhead and actionable precision, including orphan test 
 <!-- mdformat off(prevent table wrapping) -->
 | Phase | Milestone | Scope | Key Rationale & Risk Profile |
 | :--- | :--- | :--- | :--- |
-| **Phase 1 (MVP)** | **Top-Level Declarations** | Top-level classes, functions, mixins, extensions, extension types, typedefs, and top-level variables in `lib/src/`, `bin/`, `tool/`, `example/`. | **Highest ROI, Lowest Risk**: Zero polymorphism or subtype dispatch ambiguity. Deleting a dead top-level class safely wipes out all its internal dead members and unused imports in one clean strike without breaking public API contracts. |
+| **Phase 1 (MVP)** | **Top-Level Declarations** | Top-level classes, functions, mixins, extensions, extension types, typedefs, and top-level variables in `lib/src/`, `bin/`, `tool/`. | **Highest ROI, Lowest Risk**: Zero polymorphism or subtype dispatch ambiguity. Deleting a dead top-level class safely wipes out all its internal dead members and unused imports in one clean strike. |
 | **Phase 2** | **Internal Class & Mixin Members** | Methods, fields, constructors, getters, and setters on unexported classes in `lib/src/`. | **Medium Complexity**: Requires Class Hierarchy Analysis (CHA) to prevent false positives on virtual interface overrides (`implements BaseHandler`). |
 | **Phase 3** | **Enum Constants & Positional Pruning** | Enum values (`Status.deprecated`) and positional constructor fields. | **High Subtlety**: Requires verifying Dart 3 pattern match / switch expression exhaustiveness and `.values` array usage. |
 <!-- mdformat on -->
 
 ---
 
-## 6. Next Planning Dimensions (Backlog for Discussion)
+## 6. CLI Flags & Configuration
 
-1. **Remediation Automation**: Safe deletion AST rewrite mechanics (e.g. `--fix` / `--remove`).
-2. **CLI Flags & Configuration**: `--format=json|markdown`, `--include-tools`, `--ignore-tests`.
-3. **Baseline File Support**: `.zombie_baseline.json` for incremental CI ratchet.
+```bash
+zombie [options] [target_path]
+```
+
+<!-- mdformat off(prevent table wrapping) -->
+| Flag | Options / Default | Description |
+| :--- | :--- | :--- |
+| `--format` | `json` \| `markdown` (default: `markdown`) | Output formatting mode. |
+| `--example-mode` | `demonstration` (default) \| `strict` \| `skip` | In `demonstration`, code in `example/` is a consumer root and immune from deletion. |
+| `--package-type` | `auto` (default) \| `library` \| `app` | `auto` inspects `publish_to: none` in `pubspec.yaml`. |
+| `--include-generated` | `false` (default) \| `true` | When false, ignores `*.g.dart`, `*.freezed.dart`. |
+| `--fail-on-zombies` | `false` (default) \| `true` | Exit with non-zero status code if any zombie is detected (for CI gates). |
+<!-- mdformat on -->
