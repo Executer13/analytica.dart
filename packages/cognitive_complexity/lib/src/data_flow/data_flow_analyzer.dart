@@ -1,12 +1,14 @@
 import 'dart:io';
+
+import 'package:analytica/analytica.dart';
 import 'package:analyzer/dart/analysis/analysis_context_collection.dart';
 import 'package:analyzer/dart/analysis/results.dart';
 import 'package:analyzer/dart/ast/ast.dart';
 import 'package:analyzer/dart/ast/visitor.dart';
 import 'package:analyzer/source/line_info.dart';
 import 'package:path/path.dart' as p;
+
 import 'models.dart';
-import 'sdk_discovery.dart';
 import 'signature_synthesizer.dart';
 import 'visitors/in_block_visitor.dart';
 import 'visitors/post_block_visitor.dart';

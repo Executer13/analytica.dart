@@ -1,7 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
+import 'package:analytica/analytica.dart';
 import 'package:args/args.dart';
-import 'package:io/io.dart';
 import 'complexity_analyzer.dart';
 import 'delta_analyzer.dart';
 import 'github_reporter.dart';
@@ -74,13 +74,13 @@ Future<int> runCli(
     }
 
     final targets = argResults.rest.isEmpty ? ['lib'] : argResults.rest;
-    final threshold = _parseNonNegativeInt(
+    final threshold = parseNonNegativeInt(
       argResults['threshold'] as String,
       'threshold',
     );
     int? failThreshold;
     if (argResults['fail-threshold'] != null) {
-      failThreshold = _parseNonNegativeInt(
+      failThreshold = parseNonNegativeInt(
         argResults['fail-threshold'] as String,
         'fail-threshold',
       );
@@ -133,16 +133,6 @@ Future<int> runCli(
   }
 }
 
-int _parseNonNegativeInt(String val, String name) {
-  final parsed = int.tryParse(val);
-  if (parsed == null || parsed < 0) {
-    throw FormatException(
-      'Invalid $name: $val. Must be a non-negative integer.',
-    );
-  }
-  return parsed;
-}
-
 Future<int> _handleDiffMode({
   required String gitDiffBase,
   required List<String> targets,
@@ -170,7 +160,7 @@ Future<int> _handleDiffMode({
   } else if (format == 'github') {
     final reporter = GitHubReporter(
       stdoutSink: out,
-      summaryFile: _resolveSummaryFile(),
+      summaryFile: resolveGitHubSummaryFile(),
     );
     reporter.printReport(
       deltaSummary: summary,
@@ -221,7 +211,7 @@ int _handleRegularMode({
   } else if (format == 'github') {
     final reporter = GitHubReporter(
       stdoutSink: out,
-      summaryFile: _resolveSummaryFile(),
+      summaryFile: resolveGitHubSummaryFile(),
     );
     reporter.printReport(
       regularResults: displayed,
@@ -363,10 +353,4 @@ String _formatDeltaMarker(ComplexityDelta d, bool isViolation) {
   if (isViolation) return ' [VIOLATION]';
   if (d.delta < 0) return ' [IMPROVED]';
   return '';
-}
-
-File? _resolveSummaryFile() {
-  final path = Platform.environment['GITHUB_STEP_SUMMARY'];
-  if (path == null || path.isEmpty) return null;
-  return File(path);
 }

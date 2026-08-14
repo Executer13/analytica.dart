@@ -1,4 +1,6 @@
 import 'dart:io';
+
+import 'package:analytica/sdk_discovery.dart';
 import 'package:path/path.dart' as p;
 
 import 'models.dart';
@@ -136,7 +138,8 @@ class RootHarvester {
 
     if (!hasDirectConfig && !_hasEnclosingPackageConfig(options.packagePath)) {
       if (options.autoPubGet) {
-        final result = Process.runSync(Platform.resolvedExecutable, [
+        final dartExe = findDartExecutable(sdkPath: options.sdkPath) ?? 'dart';
+        final result = Process.runSync(dartExe, [
           'pub',
           'get',
         ], workingDirectory: options.packagePath);

@@ -1,13 +1,13 @@
 import 'dart:io';
 
-import 'package:analytica/sdk_discovery.dart';
+import 'package:analytica/analytica.dart';
 import 'package:checks/checks.dart';
 import 'package:path/path.dart' as p;
 import 'package:test/scaffolding.dart';
 import 'package:test_descriptor/test_descriptor.dart' as d;
 
 void main() {
-  group('isValidSdk', () {
+  group('isValidSdk / isValidSdkPath', () {
     test('accepts a root with lib/_internal/libraries.dart', () async {
       await d.dir('sdk', [
         d.dir('lib', [
@@ -16,7 +16,31 @@ void main() {
       ]).create();
 
       check(isValidSdk('${d.sandbox}/sdk')).isTrue();
+      check(isValidSdkPath('${d.sandbox}/sdk')).isTrue();
     });
+
+    test('accepts a root with lib/libraries.json', () async {
+      await d.dir('sdk_json', [
+        d.dir('lib', [d.file('libraries.json', '{}')]),
+      ]).create();
+
+      check(isValidSdk('${d.sandbox}/sdk_json')).isTrue();
+      check(isValidSdkPath('${d.sandbox}/sdk_json')).isTrue();
+    });
+
+    test(
+      'accepts a root with lib/_internal/allowed_experiments.json',
+      () async {
+        await d.dir('sdk_exp', [
+          d.dir('lib', [
+            d.dir('_internal', [d.file('allowed_experiments.json', '{}')]),
+          ]),
+        ]).create();
+
+        check(isValidSdk('${d.sandbox}/sdk_exp')).isTrue();
+        check(isValidSdkPath('${d.sandbox}/sdk_exp')).isTrue();
+      },
+    );
 
     test('accepts a root with lib/_internal and bin/dart', () async {
       await d.dir('sdk', [
@@ -25,14 +49,16 @@ void main() {
       ]).create();
 
       check(isValidSdk('${d.sandbox}/sdk')).isTrue();
+      check(isValidSdkPath('${d.sandbox}/sdk')).isTrue();
     });
 
     test('rejects an AOT app bundle (bin only, no lib/_internal)', () async {
       await d.dir('bundle', [
-        d.dir('bin', [d.file('data_flow', '')]),
+        d.dir('bin', [d.file('tool_exe', '')]),
       ]).create();
 
       check(isValidSdk('${d.sandbox}/bundle')).isFalse();
+      check(isValidSdkPath('${d.sandbox}/bundle')).isFalse();
     });
   });
 
@@ -107,5 +133,48 @@ void main() {
 
       check(resolveSdkFromDir('${d.sandbox}/stray', 'dart')).isNull();
     });
+  });
+
+  group('findSdkPath & sdkPath', () {
+    test('finds SDK in running environment', () {
+      final path = findSdkPath();
+      check(path).isNotNull();
+      check(isValidSdk(path!)).isTrue();
+      check(sdkPath).equals(path);
+    });
+
+    test('finds Dart executable', () {
+      final exe = findDartExecutable();
+      check(exe).isNotNull();
+      check(File(exe!).existsSync()).isTrue();
+      check(dartExecutable).equals(exe);
+    });
+
+    test('finds Dart executable with custom sdkPath override', () async {
+      final exeName = Platform.isWindows ? 'dart.exe' : 'dart';
+      await d.dir('custom_sdk', [
+        d.dir('lib', [
+          d.dir('_internal', [d.file('libraries.dart', '')]),
+        ]),
+        d.dir('bin', [d.file(exeName, '')]),
+      ]).create();
+
+      final customSdk = '${d.sandbox}/custom_sdk';
+      final exe = findDartExecutable(sdkPath: customSdk);
+      check(exe).equals(p.join(customSdk, 'bin', exeName));
+    });
+
+    test(
+      'findDartExecutable returns null when sdkPath has no binary',
+      () async {
+        await d.dir('invalid_sdk', [
+          d.dir('lib', [d.dir('_internal')]),
+        ]).create();
+
+        final invalidSdk = '${d.sandbox}/invalid_sdk';
+        final exe = findDartExecutable(sdkPath: invalidSdk);
+        check(exe).isNull();
+      },
+    );
   });
 }

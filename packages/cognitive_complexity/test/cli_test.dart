@@ -1,9 +1,19 @@
+import 'dart:io';
 import 'package:checks/checks.dart';
+import 'package:path/path.dart' as p;
 import 'package:test/scaffolding.dart';
 import 'package:test_descriptor/test_descriptor.dart' as d;
 import 'package:test_process/test_process.dart';
 
 void main() {
+  final binPath = File('bin/cognitive_complexity.dart').existsSync()
+      ? p.normalize(p.absolute('bin/cognitive_complexity.dart'))
+      : p.normalize(
+          p.absolute(
+            'packages/cognitive_complexity/bin/cognitive_complexity.dart',
+          ),
+        );
+
   group('CLI Integration Tests', () {
     test('Calculates complexity and displays text table report', () async {
       await d.dir('project', [
@@ -22,9 +32,8 @@ int compute(int x) {
         ]),
       ]).create();
 
-      final process = await TestProcess.start('dart', [
-        'run',
-        'bin/cognitive_complexity.dart',
+      final process = await TestProcess.start(Platform.resolvedExecutable, [
+        binPath,
         '${d.sandbox}/project',
       ]);
 
@@ -52,9 +61,8 @@ class MyService {
           ]),
         ]).create();
 
-        final process = await TestProcess.start('dart', [
-          'run',
-          'bin/cognitive_complexity.dart',
+        final process = await TestProcess.start(Platform.resolvedExecutable, [
+          binPath,
           '--format',
           'json',
           '${d.sandbox}/project_json',
@@ -86,9 +94,8 @@ void complexFunc(int a) {
         ]),
       ]).create();
 
-      final process = await TestProcess.start('dart', [
-        'run',
-        'bin/cognitive_complexity.dart',
+      final process = await TestProcess.start(Platform.resolvedExecutable, [
+        binPath,
         '--fail-threshold',
         '2',
         '${d.sandbox}/project_fail',

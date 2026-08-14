@@ -10,14 +10,15 @@ import 'package:test_process/test_process.dart';
 void main() {
   // Pin subprocesses to the SDK running the tests rather than PATH's `dart`.
   final dartExe = Platform.resolvedExecutable;
+  final binPath = File('bin/data_flow.dart').existsSync()
+      ? p.normalize(p.absolute('bin/data_flow.dart'))
+      : p.normalize(
+          p.absolute('packages/cognitive_complexity/bin/data_flow.dart'),
+        );
 
   group('DataFlow CLI Integration', () {
     test('Displays usage help and exits with code 0 on --help', () async {
-      final proc = await TestProcess.start(dartExe, [
-        'run',
-        'bin/data_flow.dart',
-        '--help',
-      ]);
+      final proc = await TestProcess.start(dartExe, [binPath, '--help']);
 
       final stdout = await proc.stdoutStream().join('\n');
       await proc.shouldExit(0);
@@ -28,10 +29,7 @@ void main() {
     });
 
     test('Exits with code 64 when no target file is provided', () async {
-      final proc = await TestProcess.start(dartExe, [
-        'run',
-        'bin/data_flow.dart',
-      ]);
+      final proc = await TestProcess.start(dartExe, [binPath]);
 
       final stderr = await proc.stderrStream().join('\n');
       await proc.shouldExit(64);
@@ -54,8 +52,7 @@ void runFlow(String token) {
       ]).create();
 
       final proc = await TestProcess.start(dartExe, [
-        'run',
-        'bin/data_flow.dart',
+        binPath,
         '${d.sandbox}/project/sample.dart:4-6',
       ]);
 
@@ -87,8 +84,7 @@ void process(int a, int b) {
         ]).create();
 
         final proc = await TestProcess.start(dartExe, [
-          'run',
-          'bin/data_flow.dart',
+          binPath,
           '--format=text',
           '--name=_add',
           '--lines=3-4',
@@ -124,8 +120,7 @@ void process(int a) {
       // Test with drive-like prefix pattern
       final samplePath = '${d.sandbox}/project3/sample3.dart';
       final proc = await TestProcess.start(dartExe, [
-        'run',
-        'bin/data_flow.dart',
+        binPath,
         '$samplePath:3-4',
       ]);
 
@@ -141,11 +136,7 @@ void process(int a) {
 
   group('SDK path resolution', () {
     test('Documents --sdk-path and DART_SDK in help text', () async {
-      final proc = await TestProcess.start(dartExe, [
-        'run',
-        'bin/data_flow.dart',
-        '--help',
-      ]);
+      final proc = await TestProcess.start(dartExe, [binPath, '--help']);
 
       final stdout = await proc.stdoutStream().join('\n');
       await proc.shouldExit(0);
@@ -158,8 +149,7 @@ void process(int a) {
       await d.dir('proj', [d.file('sample.dart', 'void main() {}\n')]).create();
 
       final proc = await TestProcess.start(dartExe, [
-        'run',
-        'bin/data_flow.dart',
+        binPath,
         '--sdk-path',
         '${d.sandbox}/proj',
         '${d.sandbox}/proj/sample.dart:1-1',
@@ -184,8 +174,7 @@ void process(int a) {
 
       final sdkRoot = p.dirname(p.dirname(Platform.resolvedExecutable));
       final proc = await TestProcess.start(dartExe, [
-        'run',
-        'bin/data_flow.dart',
+        binPath,
         '--sdk-path',
         sdkRoot,
         '${d.sandbox}/proj2/sample.dart:3-3',

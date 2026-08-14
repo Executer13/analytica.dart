@@ -1,3 +1,4 @@
+import 'package:analytica/analytica.dart';
 import 'package:analyzer/dart/analysis/analysis_context_collection.dart';
 import 'package:analyzer/dart/analysis/results.dart';
 import 'package:analyzer/dart/ast/ast.dart';
@@ -10,7 +11,6 @@ import 'ast_visitor.dart';
 import 'comment_parser.dart';
 import 'models.dart';
 import 'root_harvester.dart';
-import 'sdk_discovery.dart';
 
 /// Core reachability and dead declaration analysis engine for Dart packages.
 class ZombieEngine {

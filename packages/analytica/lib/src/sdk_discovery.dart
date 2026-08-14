@@ -1,21 +1,19 @@
 import 'dart:io';
 import 'package:path/path.dart' as p;
+import 'exceptions.dart';
 
-// Not exported from `lib/data_flow.dart`: this is an internal helper module,
-// public within `src` so unit tests can exercise the discovery logic.
-//
-// TODO: Replace manual SDK discovery helpers with package:cli_util once
-// https://github.com/dart-lang/tools/issues/2504 lands and is published.
-
-/// Thrown when a usable Dart SDK cannot be located or a provided SDK path
-/// is not a valid SDK root.
-class SdkDiscoveryException implements Exception {
-  final String message;
-
-  const SdkDiscoveryException(this.message);
-
-  @override
-  String toString() => message;
+/// Throwing getter that locates a Dart SDK root using [findSdkPath].
+///
+/// Throws [SdkDiscoveryException] if no valid Dart SDK can be located.
+String get sdkPath {
+  final path = findSdkPath();
+  if (path == null) {
+    throw const SdkDiscoveryException(
+      'Cannot locate a Dart SDK. Pass --sdk-path, set the DART_SDK environment '
+      'variable, or ensure a Dart SDK is on PATH.',
+    );
+  }
+  return path;
 }
 
 /// Locates a Dart SDK root, probing in order: the running VM's executable,
@@ -24,13 +22,40 @@ class SdkDiscoveryException implements Exception {
 /// `bin/cache/dart-sdk`), and finally `FLUTTER_ROOT`.
 ///
 /// Returns `null` when no valid SDK is found — notably when running as a
-/// standalone AOT executable (`dart run cognitive_complexity:data_flow@`),
-/// where `Platform.resolvedExecutable` is the tool binary itself.
+/// standalone AOT executable (`dart compile exe`), where
+/// `Platform.resolvedExecutable` is the tool binary itself.
 String? findSdkPath() =>
     _findSdkFromExecutable() ??
     _findSdkFromEnv() ??
     _findSdkFromPath() ??
     _findSdkFromFlutterRoot();
+
+/// Throwing getter that returns the absolute path to the `dart` binary.
+///
+/// Uses `.exe` on Windows to avoid spawning batch wrapper scripts.
+/// Throws [SdkDiscoveryException] if the executable cannot be located.
+String get dartExecutable {
+  final exe = findDartExecutable();
+  if (exe == null) {
+    throw const SdkDiscoveryException(
+      'Cannot locate dart executable. Ensure a Dart SDK is on PATH or set '
+      'DART_SDK.',
+    );
+  }
+  return exe;
+}
+
+/// Returns the absolute path to the `dart` executable inside the discovered
+/// SDK, or `null` if no valid SDK/binary is found.
+///
+/// Accepts an optional [sdkPath] override.
+String? findDartExecutable({String? sdkPath}) {
+  final sdk = sdkPath ?? findSdkPath();
+  if (sdk == null) return null;
+  final exeName = Platform.isWindows ? 'dart.exe' : 'dart';
+  final exe = p.join(sdk, 'bin', exeName);
+  return File(exe).existsSync() ? exe : null;
+}
 
 String? _findSdkFromExecutable() {
   final exe = File(Platform.resolvedExecutable);
@@ -106,11 +131,22 @@ String? resolveSdkFromDir(String dir, String executableName) {
   return isValidSdk(flutterCache) ? flutterCache : null;
 }
 
+/// Alias for [isValidSdk].
+bool isValidSdkPath(String path) => isValidSdk(path);
+
 /// Whether [path] looks like a Dart SDK root usable by the analyzer.
 bool isValidSdk(String path) {
   final internal = Directory(p.join(path, 'lib', '_internal'));
-  if (!internal.existsSync()) return false;
-  return File(p.join(internal.path, 'libraries.dart')).existsSync() ||
+  final hasInternal = internal.existsSync();
+  final hasLibrariesJson = File(
+    p.join(path, 'lib', 'libraries.json'),
+  ).existsSync();
+
+  if (!hasInternal && !hasLibrariesJson) return false;
+
+  return hasLibrariesJson ||
+      File(p.join(internal.path, 'libraries.dart')).existsSync() ||
+      File(p.join(internal.path, 'allowed_experiments.json')).existsSync() ||
       File(
         p.join(internal.path, 'sdk_library_metadata', 'lib', 'libraries.dart'),
       ).existsSync() ||

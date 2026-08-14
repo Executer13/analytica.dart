@@ -1,5 +1,7 @@
 import 'package:analyzer/dart/element/element.dart';
 
+export 'package:analytica/analytica.dart' show PackageResolutionException;
+
 /// The classification category of a detected zombie declaration.
 enum ZombieClassification {
   /// An unexported declaration with zero incoming references from production or
@@ -153,18 +155,6 @@ class ZombieOptions {
     this.autoPubGet = false,
     this.sdkPath,
   });
-}
-
-/// Exception thrown when package dependencies have not been resolved via
-/// `dart pub get` before running analysis.
-class PackageResolutionException implements Exception {
-  final String message;
-  final String packagePath;
-
-  const PackageResolutionException(this.message, this.packagePath);
-
-  @override
-  String toString() => 'PackageResolutionException: $message ($packagePath)';
 }
 
 /// Details about a test call site referencing a dead declaration.

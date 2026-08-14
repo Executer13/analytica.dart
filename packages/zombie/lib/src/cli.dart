@@ -1,25 +1,23 @@
 import 'dart:io';
+
+import 'package:analytica/analytica.dart';
 import 'package:args/args.dart';
-import 'package:io/io.dart';
 import 'package:path/path.dart' as p;
 
 import 'formatters/json_formatter.dart';
 import 'formatters/markdown_formatter.dart';
 import 'models.dart';
 import 'reachability_engine.dart';
-import 'sdk_discovery.dart';
 
 const String zombieVersion = '0.1.0-dev';
 
 /// Configures and parses CLI arguments for `pkg:zombie`.
 ArgParser buildArgParser() {
   return ArgParser()
-    ..addOption(
-      'format',
-      abbr: 'f',
-      help: 'Output formatting mode.',
+    ..addFormatOption(
       allowed: ['markdown', 'json', 'github'],
       defaultsTo: 'markdown',
+      help: 'Output formatting mode.',
     )
     ..addOption(
       'example-mode',
@@ -45,22 +43,14 @@ ArgParser buildArgParser() {
           'Exit with non-zero code (1) if any zombie declaration is detected.',
       defaultsTo: false,
     )
-    ..addOption(
-      'sdk-path',
-      help: 'Path to the Dart SDK root (overrides auto-discovery).',
-    )
+    ..addSdkPathOption()
     ..addFlag(
       'pub-get',
       negatable: false,
       help: 'Automatically run "dart pub get" if dependencies are unresolved.',
     )
-    ..addFlag(
-      'help',
-      abbr: 'h',
-      negatable: false,
-      help: 'Print usage information.',
-    )
-    ..addFlag('version', negatable: false, help: 'Print zombie version.');
+    ..addHelpFlag()
+    ..addVersionFlag(help: 'Print zombie version.');
 }
 
 /// Main CLI runner for `pkg:zombie`.

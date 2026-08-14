@@ -1,11 +1,11 @@
 import 'dart:convert';
 import 'dart:io';
+
+import 'package:analytica/analytica.dart';
 import 'package:args/args.dart';
-import 'package:io/io.dart';
-import 'package:path/path.dart' as p;
+
 import 'data_flow_analyzer.dart';
 import 'models.dart';
-import 'sdk_discovery.dart';
 
 /// Executes the Data-Flow CLI with [args] and returns the exit code.
 Future<int> runCli(
@@ -35,7 +35,10 @@ Future<int> runCli(
       return ExitCode.usage.code;
     }
 
-    final (:filePath, :linesString) = _resolveTarget(argResults);
+    final (:filePath, :linesString) = resolveTargetFileAndLines(
+      argResults.rest.first,
+      explicitLines: argResults['lines'] as String?,
+    );
     if (linesString == null || linesString.trim().isEmpty) {
       stderrSink.writeln(
         'Error: Target line range is required '
@@ -72,12 +75,7 @@ Future<int> runCli(
 }
 
 ArgParser _buildParser() => ArgParser()
-  ..addFlag(
-    'help',
-    abbr: 'h',
-    negatable: false,
-    help: 'Print this usage information.',
-  )
+  ..addHelpFlag(help: 'Print this usage information.')
   ..addOption(
     'lines',
     abbr: 'l',
@@ -98,32 +96,12 @@ ArgParser _buildParser() => ArgParser()
     allowed: ['json', 'text'],
     help: 'Output format.',
   )
-  ..addOption(
-    'sdk-path',
+  ..addSdkPathOption(
     help:
         'Path to the Dart SDK root used for analysis. Defaults to '
         'auto-discovery (running VM, DART_SDK environment variable, PATH, '
         'FLUTTER_ROOT).',
   );
-
-({String filePath, String? linesString}) _resolveTarget(ArgResults argResults) {
-  final rawTarget = argResults.rest.first;
-  var filePath = rawTarget;
-  var linesString = argResults['lines'] as String?;
-
-  final match = RegExp(r'^(.*?):(\d+(?:-\d+)?)$').firstMatch(rawTarget);
-  if (match != null) {
-    if (linesString != null) {
-      throw const FormatException(
-        'Target lines specified both via --lines and file path.',
-      );
-    }
-    filePath = match.group(1)!;
-    linesString = match.group(2)!;
-  }
-
-  return (filePath: p.normalize(filePath), linesString: linesString);
-}
 
 Future<void> _executeAnalysis({
   required String filePath,
@@ -133,12 +111,12 @@ Future<void> _executeAnalysis({
   required String? sdkPath,
   required StringSink stdoutSink,
 }) async {
-  final lineBounds = _parseLineBounds(linesString);
+  final (startLine, endLine) = parseLineBounds(linesString);
   final analyzer = DataFlowAnalyzer(sdkPath: sdkPath);
   final result = await analyzer.analyzeFile(
     filePath: filePath,
-    startLine: lineBounds.$1,
-    endLine: lineBounds.$2,
+    startLine: startLine,
+    endLine: endLine,
     methodName: methodName,
   );
 
@@ -149,29 +127,6 @@ Future<void> _executeAnalysis({
   } else {
     _printTextReport(result, stdoutSink);
   }
-}
-
-(int, int) _parseLineBounds(String lines) {
-  final parts = lines.split('-');
-  if (parts.length != 2) {
-    throw FormatException(
-      'Invalid lines format "$lines". Expected <start>-<end> (e.g. 45-80).',
-    );
-  }
-
-  final start = int.tryParse(parts[0].trim());
-  final end = int.tryParse(parts[1].trim());
-
-  if (start == null || start < 1) {
-    throw FormatException('Invalid start line: "${parts[0]}". Must be >= 1.');
-  }
-  if (end == null || end < start) {
-    throw FormatException(
-      'Invalid end line: "${parts[1]}". Must be >= start line ($start).',
-    );
-  }
-
-  return (start, end);
 }
 
 void _printUsage(ArgParser parser, StringSink sink) {
