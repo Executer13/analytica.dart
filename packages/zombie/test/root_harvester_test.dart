@@ -1,0 +1,112 @@
+import 'package:checks/checks.dart';
+import 'package:test/test.dart';
+import 'package:test_descriptor/test_descriptor.dart' as d;
+import 'package:zombie/src/models.dart';
+import 'package:zombie/src/root_harvester.dart';
+
+void main() {
+  group('RootHarvester & PackageTopology', () {
+    test('discovers package directory topology correctly', () async {
+      await d.dir('sample_pkg', [
+        d.file('pubspec.yaml', '''
+name: sample_pkg
+version: 1.0.0
+flutter:
+  plugin:
+    platforms:
+      android:
+        dartPluginClass: SampleAndroidPlugin
+'''),
+        d.file('build.yaml', '''
+targets:
+  \$default:
+    builders:
+      sample_pkg|builder:
+        builder_factories: ["sampleBuilderFactory", "secondaryFactory"]
+'''),
+        d.dir('lib', [
+          d.file('sample_pkg.dart', 'export "src/live.dart";'),
+          d.dir('src', [
+            d.file('live.dart', 'void live() {}'),
+            d.file('generated.g.dart', 'void generated() {}'),
+          ]),
+        ]),
+        d.dir('bin', [d.file('sample_cli.dart', 'void main() {}')]),
+        d.dir('example', [d.file('sample_example.dart', 'void main() {}')]),
+        d.dir('tool', [d.file('generate.dart', 'void main() {}')]),
+        d.dir('test', [d.file('sample_test.dart', 'void main() {}')]),
+      ]).create();
+
+      final options = ZombieOptions(
+        packagePath: d.path('sample_pkg'),
+        includeGenerated: false,
+      );
+
+      final harvester = RootHarvester(options);
+      final topology = harvester.harvestTopology();
+
+      check(topology.packageName).equals('sample_pkg');
+      check(topology.pluginClassNames).contains('SampleAndroidPlugin');
+      check(topology.builderFactoryNames).contains('sampleBuilderFactory');
+      check(topology.builderFactoryNames).contains('secondaryFactory');
+
+      check(topology.publicLibFiles).length.equals(1);
+      check(topology.internalSrcFiles).length.equals(1); // .g.dart ignored
+      check(topology.executableFiles).length.equals(1);
+      check(topology.demonstrationFiles).length.equals(1);
+      check(topology.auxiliaryFiles).length.equals(1);
+      check(topology.testFiles).length.equals(1);
+
+      check(topology.roleOf('lib/sample_pkg.dart')).equals(FileRole.publicLib);
+      check(topology.roleOf('lib/src/live.dart')).equals(FileRole.internalSrc);
+      check(topology.roleOf('bin/sample_cli.dart')).equals(FileRole.executable);
+      check(
+        topology.roleOf('example/sample_example.dart'),
+      ).equals(FileRole.demonstration);
+      check(topology.roleOf('tool/generate.dart')).equals(FileRole.auxiliary);
+      check(topology.roleOf('test/sample_test.dart')).equals(FileRole.test);
+    });
+
+    test('respects ExampleMode.skip', () async {
+      await d.dir('skip_example_pkg', [
+        d.file('pubspec.yaml', 'name: skip_example_pkg\n'),
+        d.dir('lib', [d.file('main.dart', 'void foo() {}')]),
+        d.dir('example', [d.file('demo.dart', 'void main() {}')]),
+      ]).create();
+
+      final options = ZombieOptions(
+        packagePath: d.path('skip_example_pkg'),
+        exampleMode: ExampleMode.skip,
+      );
+
+      final harvester = RootHarvester(options);
+      final topology = harvester.harvestTopology();
+
+      check(topology.demonstrationFiles).isEmpty();
+    });
+
+    test('extracts multi-line YAML builder_factories correctly', () async {
+      await d.dir('multiline_build_pkg', [
+        d.file('pubspec.yaml', 'name: multiline_build_pkg\n'),
+        d.file('build.yaml', '''
+targets:
+  \$default:
+    builders:
+      multiline_build_pkg|builder:
+        builder_factories:
+          - customBuilderOne
+          - 'customBuilderTwo'
+'''),
+        d.dir('lib', [d.file('main.dart', 'void foo() {}')]),
+      ]).create();
+
+      final options = ZombieOptions(packagePath: d.path('multiline_build_pkg'));
+
+      final harvester = RootHarvester(options);
+      final topology = harvester.harvestTopology();
+
+      check(topology.builderFactoryNames).contains('customBuilderOne');
+      check(topology.builderFactoryNames).contains('customBuilderTwo');
+    });
+  });
+}
