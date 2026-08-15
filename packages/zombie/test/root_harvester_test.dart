@@ -86,9 +86,9 @@ targets:
       final topology = harvester.harvestTopology();
 
       check(topology.packageName).equals('sample_pkg');
-      check(topology.pluginClassNames).contains('SampleAndroidPlugin');
-      check(topology.builderFactoryNames).contains('sampleBuilderFactory');
-      check(topology.builderFactoryNames).contains('secondaryFactory');
+      check(topology.frameworkRoots).contains('SampleAndroidPlugin');
+      check(topology.frameworkRoots).contains('sampleBuilderFactory');
+      check(topology.frameworkRoots).contains('secondaryFactory');
 
       check(topology.publicLibFiles).length.equals(1);
       check(topology.internalSrcFiles).length.equals(1); // .g.dart ignored
@@ -184,8 +184,8 @@ targets:
       final harvester = RootHarvester(options);
       final topology = harvester.harvestTopology();
 
-      check(topology.builderFactoryNames).contains('customBuilderOne');
-      check(topology.builderFactoryNames).contains('customBuilderTwo');
+      check(topology.frameworkRoots).contains('customBuilderOne');
+      check(topology.frameworkRoots).contains('customBuilderTwo');
     });
 
     test(
@@ -218,9 +218,9 @@ targets:
         final harvester = RootHarvester(options);
         final topology = harvester.harvestTopology();
 
-        check(topology.builderFactoryNames).contains('factoryWithComment');
-        check(topology.builderFactoryNames).contains('factoryQuoted');
-        check(topology.builderFactoryNames).contains('factorySingleQuoted');
+        check(topology.frameworkRoots).contains('factoryWithComment');
+        check(topology.frameworkRoots).contains('factoryQuoted');
+        check(topology.frameworkRoots).contains('factorySingleQuoted');
       },
     );
   });

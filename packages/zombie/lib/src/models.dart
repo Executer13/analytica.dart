@@ -1,5 +1,7 @@
 import 'package:analyzer/dart/element/element.dart';
 
+import 'adapters/adapters.dart';
+
 export 'package:analytica/analytica.dart' show PackageResolutionException;
 
 /// The classification category of a detected zombie declaration.
@@ -145,6 +147,7 @@ class ZombieOptions {
   final bool autoPubGet;
   final String? sdkPath;
   final String? jsonOutputPath;
+  final FrameworkAdapter frameworkAdapter;
 
   const ZombieOptions({
     required this.packagePath,
@@ -156,6 +159,7 @@ class ZombieOptions {
     this.autoPubGet = false,
     this.sdkPath,
     this.jsonOutputPath,
+    this.frameworkAdapter = const CompositeFrameworkAdapter.defaults(),
   });
 }
 

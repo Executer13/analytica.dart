@@ -6,6 +6,7 @@ import 'package:analyzer/dart/element/element.dart';
 import 'package:analyzer/source/line_info.dart';
 import 'package:path/path.dart' as p;
 
+import 'adapters/adapters.dart';
 import 'ast_visitor.dart';
 import 'comment_parser.dart';
 import 'models.dart';
@@ -108,7 +109,9 @@ class ZombieEngine {
             isFileIgnored || CommentParser.isDeclarationIgnored(decl);
 
         if (decl is TopLevelVariableDeclaration) {
-          final isNativeRoot = isNativeOrEntryPoint(decl);
+          final isNativeRoot =
+              isNativeOrEntryPoint(decl) ||
+              options.frameworkAdapter.isFrameworkEntryPoint(decl, null);
           for (final variable in decl.variables.variables) {
             totalDeclarationsCount++;
             final isVarIgnored =
@@ -134,7 +137,9 @@ class ZombieEngine {
               element: element,
               isIgnored: isVarIgnored,
               isTestSupport: isTestSupport,
-              isNativeRoot: isNativeRoot,
+              isNativeRoot:
+                  isNativeRoot ||
+                  options.frameworkAdapter.isFrameworkEntryPoint(decl, element),
             );
 
             allNodes.add(node);
@@ -170,7 +175,9 @@ class ZombieEngine {
           final lineInfo = unitResult.lineInfo.getLocation(decl.offset);
           final element = decl.declaredFragment?.element;
           final isTestSupport = isTestSupportDeclaration(decl, name);
-          final isNativeRoot = isNativeOrEntryPoint(decl);
+          final isNativeRoot =
+              isNativeOrEntryPoint(decl) ||
+              options.frameworkAdapter.isFrameworkEntryPoint(decl, element);
 
           final superElements = <Element>[];
           if (element is InterfaceElement) {
@@ -226,6 +233,7 @@ class ZombieEngine {
           packageRoot: absolutePackagePath,
           relativeFilePath: relPath,
           lineInfo: unitResult.lineInfo,
+          frameworkAdapter: options.frameworkAdapter,
         );
         unitResult.unit.accept(visitor);
         for (final entry in visitor.discoveredSites) {
@@ -339,7 +347,8 @@ class ZombieEngine {
           node.name == 'main';
       final isFlutterMain =
           PackageTopology.isFlutterEntrypoint(node.relativeFilePath) &&
-          node.name == 'main';
+          node.name == 'main' &&
+          topology.frameworkRoots.contains('main');
       if (isBinMain || isFlutterMain) {
         productionRoots.add(node.id);
       }
@@ -370,12 +379,15 @@ class ZombieEngine {
     }
 
     // 3.5 Config and native roots (build.yaml, pubspec plugins, @Native,
-    // @pragma).
+    // @pragma, framework roots).
     for (final node in allNodes) {
-      if (topology.builderFactoryNames.contains(node.name) ||
-          topology.pluginClassNames.contains(node.name) ||
-          node.isNativeRoot) {
+      if (node.isNativeRoot) {
         productionRoots.add(node.id);
+      } else if (topology.frameworkRoots.contains(node.name)) {
+        if (node.name != 'main' ||
+            PackageTopology.isFlutterEntrypoint(node.relativeFilePath)) {
+          productionRoots.add(node.id);
+        }
       }
     }
 
@@ -652,26 +664,20 @@ class _TestCallSiteVisitor extends RecursiveAstVisitor<void> {
   final String packageRoot;
   final String relativeFilePath;
   final LineInfo lineInfo;
+  final FrameworkAdapter frameworkAdapter;
   final List<_DiscoveredSite> discoveredSites = [];
 
   _TestCallSiteVisitor({
     required this.packageRoot,
     required this.relativeFilePath,
     required this.lineInfo,
+    required this.frameworkAdapter,
   });
 
   @override
   void visitMethodInvocation(MethodInvocation node) {
-    final methodName = node.methodName.name;
-    final isTestFn =
-        methodName == 'test' ||
-        methodName == 'testWidgets' ||
-        methodName == 'solo_test';
-    final isFixtureFn =
-        methodName == 'setUp' ||
-        methodName == 'setUpAll' ||
-        methodName == 'tearDown' ||
-        methodName == 'tearDownAll';
+    final isTestFn = frameworkAdapter.isTestCallSite(node);
+    final isFixtureFn = frameworkAdapter.isTestHarnessSite(node);
 
     if (isTestFn || isFixtureFn) {
       final loc = lineInfo.getLocation(node.offset);
@@ -684,7 +690,7 @@ class _TestCallSiteVisitor extends RecursiveAstVisitor<void> {
           description = firstArg.stringValue;
         }
       }
-      description ??= isFixtureFn ? methodName : null;
+      description ??= isFixtureFn ? node.methodName.name : null;
 
       final extractor = ElementReferenceExtractor(packageRoot);
       node.accept(extractor);

@@ -2,7 +2,6 @@ import 'dart:io';
 
 import 'package:analytica/sdk_discovery.dart';
 import 'package:path/path.dart' as p;
-import 'package:yaml/yaml.dart';
 
 import 'models.dart';
 
@@ -46,8 +45,7 @@ class PackageTopology {
   final List<String> demonstrationFiles;
   final List<String> auxiliaryFiles;
   final List<String> testFiles;
-  final Set<String> builderFactoryNames;
-  final Set<String> pluginClassNames;
+  final Set<String> frameworkRoots;
 
   const PackageTopology({
     required this.packagePath,
@@ -58,9 +56,16 @@ class PackageTopology {
     required this.demonstrationFiles,
     required this.auxiliaryFiles,
     required this.testFiles,
-    this.builderFactoryNames = const {},
-    this.pluginClassNames = const {},
+    this.frameworkRoots = const {},
   });
+
+  /// Deprecated alias for [frameworkRoots].
+  @Deprecated('Use frameworkRoots instead')
+  Set<String> get builderFactoryNames => frameworkRoots;
+
+  /// Deprecated alias for [frameworkRoots].
+  @Deprecated('Use frameworkRoots instead')
+  Set<String> get pluginClassNames => frameworkRoots;
 
   /// All scanned Dart files.
   List<String> get allFiles => [
@@ -174,8 +179,6 @@ class RootHarvester {
 
     final pubspecContent = pubspecFile.readAsStringSync();
     final packageName = _extractPackageName(pubspecContent);
-    final pluginClassNames = _extractPluginClasses(pubspecContent);
-    final builderFactoryNames = _extractBuilderFactories(options.packagePath);
 
     final publicLib = <String>[];
     final internalSrc = <String>[];
@@ -225,6 +228,23 @@ class RootHarvester {
       }
     }
 
+    final initialTopology = PackageTopology(
+      packagePath: options.packagePath,
+      packageName: packageName,
+      publicLibFiles: publicLib,
+      internalSrcFiles: internalSrc,
+      executableFiles: bin,
+      demonstrationFiles: example,
+      auxiliaryFiles: auxiliary,
+      testFiles: test,
+    );
+
+    final frameworkRoots = options.frameworkAdapter.harvestRoots(
+      topology: initialTopology,
+      packageDir: rootDir,
+      pubspecContent: pubspecContent,
+    );
+
     return PackageTopology(
       packagePath: options.packagePath,
       packageName: packageName,
@@ -234,8 +254,7 @@ class RootHarvester {
       demonstrationFiles: example,
       auxiliaryFiles: auxiliary,
       testFiles: test,
-      builderFactoryNames: builderFactoryNames,
-      pluginClassNames: pluginClassNames,
+      frameworkRoots: frameworkRoots,
     );
   }
 
@@ -266,65 +285,6 @@ class RootHarvester {
       multiLine: true,
     ).firstMatch(pubspecContent);
     return match?.group(1) ?? 'unknown_package';
-  }
-
-  Set<String> _extractPluginClasses(String pubspecContent) {
-    final results = <String>{};
-    final matches = RegExp(
-      r'(?:dartPluginClass|pluginClass):\s*["'
-      "'"
-      r']?([a-zA-Z0-9_]+)["'
-      "'"
-      r']?',
-    ).allMatches(pubspecContent);
-    for (final match in matches) {
-      final cls = match.group(1);
-      if (cls != null) results.add(cls);
-    }
-    return results;
-  }
-
-  Set<String> _extractBuilderFactories(String packagePath) {
-    final buildYaml = File(p.join(packagePath, 'build.yaml'));
-    if (!buildYaml.existsSync()) return const {};
-
-    try {
-      final content = buildYaml.readAsStringSync();
-      final doc = loadYaml(content);
-      final results = <String>{};
-
-      void extractFromNode(dynamic node) {
-        if (node is Map) {
-          for (final entry in node.entries) {
-            if (entry.key?.toString() == 'builder_factories') {
-              final val = entry.value;
-              if (val is List) {
-                for (final item in val) {
-                  if (item != null) {
-                    final str = item.toString().trim();
-                    if (str.isNotEmpty) results.add(str);
-                  }
-                }
-              } else if (val is String) {
-                final str = val.trim();
-                if (str.isNotEmpty) results.add(str);
-              }
-            } else {
-              extractFromNode(entry.value);
-            }
-          }
-        } else if (node is List) {
-          for (final item in node) {
-            extractFromNode(item);
-          }
-        }
-      }
-
-      extractFromNode(doc);
-      return results;
-    } catch (_) {
-      return const {};
-    }
   }
 
   bool _hasEnclosingPackageConfig(String packagePath) {
