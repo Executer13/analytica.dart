@@ -80,6 +80,9 @@ class PackageTopology {
   /// Resolves the role of a given [relativeFilePath].
   FileRole roleOf(String relativeFilePath) {
     final normalized = p.normalize(relativeFilePath);
+    if (testFiles.contains(normalized)) {
+      return FileRole.test;
+    }
     if (normalized.startsWith('lib/src/') ||
         normalized.startsWith('lib/src\\')) {
       return FileRole.internalSrc;
@@ -148,20 +151,15 @@ class RootHarvester {
       );
     }
 
-    final hasDirectConfig = File(
-      p.join(options.packagePath, '.dart_tool', 'package_config.json'),
-    ).existsSync();
-
-    if (!hasDirectConfig && !_hasEnclosingPackageConfig(options.packagePath)) {
+    if (!hasPackageConfig(options.packagePath) &&
+        !hasEnclosingPackageConfig(options.packagePath)) {
       if (options.autoPubGet) {
-        final dartExe = findDartExecutable(sdkPath: options.sdkPath) ?? 'dart';
-        final result = Process.runSync(dartExe, [
-          'pub',
-          'get',
-        ], workingDirectory: options.packagePath);
+        final result = runPubGet(options.packagePath, sdkPath: options.sdkPath);
         if (result.exitCode != 0) {
+          final isFlutter = isFlutterPackage(options.packagePath);
+          final toolName = isFlutter ? 'flutter' : 'dart';
           throw PackageResolutionException(
-            'Failed to resolve dependencies with "dart pub get":\n'
+            'Failed to resolve dependencies with "$toolName pub get":\n'
             '${result.stderr}',
             options.packagePath,
           );
@@ -170,8 +168,8 @@ class RootHarvester {
         throw PackageResolutionException(
           'Missing .dart_tool/package_config.json for '
           '"${options.packagePath}".\n'
-          'Please run "dart pub get" before running zombie '
-          '(or pass --pub-get).',
+          'Please run "dart pub get" (or "flutter pub get") before running '
+          'zombie (or pass --pub-get).',
           options.packagePath,
         );
       }
@@ -225,6 +223,29 @@ class RootHarvester {
           normalized.startsWith('web/') ||
           normalized.startsWith('web\\')) {
         auxiliary.add(normalized);
+      }
+    }
+
+    // Harvest files from extra roots (companion test suites, external roots)
+    for (final extraRoot in options.extraRoots) {
+      if (extraRoot.trim().isEmpty) continue;
+      final extraDir = Directory(
+        p.normalize(
+          p.isAbsolute(extraRoot)
+              ? extraRoot
+              : p.join(options.packagePath, extraRoot),
+        ),
+      );
+      if (!extraDir.existsSync()) continue;
+      for (final entity in extraDir.listSync(
+        recursive: true,
+        followLinks: false,
+      )) {
+        if (entity is! File || !entity.path.endsWith('.dart')) continue;
+        final relPath = p.relative(entity.path, from: options.packagePath);
+        if (_isExcluded(relPath)) continue;
+        final normalized = p.normalize(relPath);
+        test.add(normalized);
       }
     }
 
@@ -285,21 +306,5 @@ class RootHarvester {
       multiLine: true,
     ).firstMatch(pubspecContent);
     return match?.group(1) ?? 'unknown_package';
-  }
-
-  bool _hasEnclosingPackageConfig(String packagePath) {
-    try {
-      var dir = Directory(packagePath).parent;
-      while (dir.path != dir.parent.path) {
-        final config = File(
-          p.join(dir.path, '.dart_tool', 'package_config.json'),
-        );
-        if (config.existsSync()) {
-          return true;
-        }
-        dir = dir.parent;
-      }
-    } catch (_) {}
-    return false;
   }
 }
