@@ -4,4 +4,10 @@ Monorepo workspace for Dart static analysis, complexity metrics, data-flow analy
 
 ## Packages
 
+* [`analytica`](packages/analytica): Shared CLI utilities, SDK discovery, AST analyzer extensions, and Git diff utilities.
 * [`cognitive_complexity`](packages/cognitive_complexity): Algorithmic Cognitive Complexity calculation and Data-Flow analysis library and CLI tools.
+* [`zombie`](packages/zombie): Dead code analysis engine and CLI tool with extensible framework adapters.
+
+## Skills
+
+* [`dart-cognitive-complexity`](skills/dart-cognitive-complexity): LLM agent skill for automated cognitive complexity audits and semantic data-flow refactoring.

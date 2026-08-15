@@ -81,7 +81,7 @@ runs:
         
         # Execute the scanner CLI tool and capture exit code
         set +e
-        dart run bin/cognitive_complexity.dart \
+        dart run cognitive_complexity \
           --threshold="$INPUT_THRESHOLD" \
           --fail-threshold="$INPUT_FAIL_THRESHOLD" \
           --format="$INPUT_FORMAT" \

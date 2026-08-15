@@ -1,3 +1,8 @@
+## 0.2.4-wip
+
+- Move package into pub workspace monorepo layout under `packages/cognitive_complexity`.
+- Restore root `action.yml` and `skills/` structure for monorepo workspace.
+
 ## 0.2.3+2
 
 - Streamline `README.md` into a focused, scannable TL;DR.
