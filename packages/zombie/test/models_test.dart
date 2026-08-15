@@ -157,5 +157,29 @@ void main() {
       check(OutputFormat.fromString('markdown')).equals(OutputFormat.markdown);
       check(OutputFormat.fromString('json')).equals(OutputFormat.json);
     });
+
+    test('ZombieOptions default and custom values', () {
+      const defaultOptions = ZombieOptions(packagePath: '/path/to/pkg');
+      check(defaultOptions.testSupportPatterns).deepEquals(['Fake*', 'Mock*']);
+      check(defaultOptions.ignoreNamePatterns).isEmpty();
+      check(defaultOptions.format).equals(OutputFormat.markdown);
+      check(defaultOptions.exampleMode).equals(ExampleMode.demonstration);
+      check(defaultOptions.mode).equals(AnalysisMode.library);
+      check(defaultOptions.includeGenerated).isFalse();
+      check(defaultOptions.failOnZombies).isFalse();
+      check(defaultOptions.autoPubGet).isFalse();
+
+      const customOptions = ZombieOptions(
+        packagePath: '/path/to/pkg',
+        testSupportPatterns: ['*Stub', 'CustomFixture*'],
+        ignoreNamePatterns: ['*_generated', 'Ignored*'],
+      );
+      check(
+        customOptions.testSupportPatterns,
+      ).deepEquals(['*Stub', 'CustomFixture*']);
+      check(
+        customOptions.ignoreNamePatterns,
+      ).deepEquals(['*_generated', 'Ignored*']);
+    });
   });
 }

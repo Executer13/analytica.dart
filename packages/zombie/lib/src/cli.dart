@@ -51,6 +51,20 @@ ArgParser buildArgParser() {
           'Exit with non-zero code (1) if any zombie declaration is detected.',
       defaultsTo: false,
     )
+    ..addOption(
+      'test-support-patterns',
+      help:
+          'Comma-separated naming wildcard patterns for test fixtures and '
+          'hooks.',
+      defaultsTo: 'Fake*,Mock*',
+    )
+    ..addOption(
+      'ignore-name-patterns',
+      help:
+          'Comma-separated naming wildcard patterns for declaration names to '
+          'ignore.',
+      defaultsTo: '',
+    )
     ..addSdkPathOption()
     ..addFlag(
       'pub-get',
@@ -126,6 +140,12 @@ class ZombieCliRunner {
     final autoPubGet = results.flag('pub-get');
     final sdkPath = results.option('sdk-path');
     final jsonOutputPath = results.option('json-output');
+    final testSupportPatterns = _parseCommaSeparated(
+      results.option('test-support-patterns'),
+    );
+    final ignoreNamePatterns = _parseCommaSeparated(
+      results.option('ignore-name-patterns'),
+    );
 
     final options = ZombieOptions(
       packagePath: normalizedPath,
@@ -137,6 +157,8 @@ class ZombieCliRunner {
       autoPubGet: autoPubGet,
       sdkPath: sdkPath,
       jsonOutputPath: jsonOutputPath,
+      testSupportPatterns: testSupportPatterns,
+      ignoreNamePatterns: ignoreNamePatterns,
     );
 
     try {
@@ -174,4 +196,13 @@ class ZombieCliRunner {
       return ExitCode.software.code;
     }
   }
+}
+
+List<String> _parseCommaSeparated(String? value) {
+  if (value == null || value.trim().isEmpty) return const [];
+  return value
+      .split(',')
+      .map((s) => s.trim())
+      .where((s) => s.isNotEmpty)
+      .toList();
 }

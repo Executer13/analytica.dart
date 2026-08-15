@@ -1,6 +1,6 @@
 import 'package:analytica/analyzer.dart';
 import 'package:analyzer/dart/analysis/results.dart';
-import 'package:analyzer/dart/ast/ast.dart';
+import 'package:analyzer/dart/ast/ast.dart' hide WildcardPattern;
 import 'package:analyzer/dart/ast/visitor.dart';
 import 'package:analyzer/dart/element/element.dart';
 import 'package:analyzer/source/line_info.dart';
@@ -15,8 +15,16 @@ import 'root_harvester.dart';
 /// Core reachability and dead declaration analysis engine for Dart packages.
 class ZombieEngine {
   final ZombieOptions options;
+  final List<WildcardPattern> _ignoreNameWildcards;
+  final List<WildcardPattern> _testSupportWildcards;
 
-  const ZombieEngine(this.options);
+  ZombieEngine(this.options)
+    : _ignoreNameWildcards = options.ignoreNamePatterns
+          .map(WildcardPattern.new)
+          .toList(),
+      _testSupportWildcards = options.testSupportPatterns
+          .map(WildcardPattern.new)
+          .toList();
 
   /// Performs reachability analysis on the target package.
   Future<ZombieReport> analyze() async {
@@ -435,6 +443,7 @@ class ZombieEngine {
 
       if (!isCandidate) continue;
       if (node.isIgnored) continue;
+      if (WildcardPattern.anyMatch(_ignoreNameWildcards, node.name)) continue;
       if (productionLive.contains(node.id)) continue;
 
       // Sealed class direct subtype preservation:
@@ -474,7 +483,10 @@ class ZombieEngine {
         );
       } else {
         // Reached by tests.
-        if (node.isTestSupport) {
+        final isTestHook =
+            node.isTestSupport ||
+            WildcardPattern.anyMatch(_testSupportWildcards, node.name);
+        if (isTestHook) {
           // Explicit test fixture/hook (@visibleForTesting, Fake*): preserved!
           continue;
         }

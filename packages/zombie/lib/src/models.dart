@@ -137,7 +137,7 @@ enum OutputFormat {
 }
 
 /// Configuration options for reachability analysis.
-class ZombieOptions {
+final class ZombieOptions {
   final String packagePath;
   final OutputFormat format;
   final ExampleMode exampleMode;
@@ -148,6 +148,8 @@ class ZombieOptions {
   final String? sdkPath;
   final String? jsonOutputPath;
   final FrameworkAdapter frameworkAdapter;
+  final List<String> testSupportPatterns;
+  final List<String> ignoreNamePatterns;
 
   const ZombieOptions({
     required this.packagePath,
@@ -160,6 +162,8 @@ class ZombieOptions {
     this.sdkPath,
     this.jsonOutputPath,
     this.frameworkAdapter = const CompositeFrameworkAdapter.defaults(),
+    this.testSupportPatterns = const ['Fake*', 'Mock*'],
+    this.ignoreNamePatterns = const [],
   });
 }
 
