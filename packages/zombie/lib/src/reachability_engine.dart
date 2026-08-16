@@ -129,6 +129,10 @@ class ZombieEngine {
             isFileIgnored || CommentParser.isDeclarationIgnored(decl);
 
         if (decl is TopLevelVariableDeclaration) {
+          final isExternalBinding = options.frameworkAdapter.isExternalBinding(
+            decl,
+            null,
+          );
           final isNativeRoot =
               isNativeOrEntryPoint(decl) ||
               options.frameworkAdapter.isFrameworkEntryPoint(decl, null);
@@ -157,6 +161,9 @@ class ZombieEngine {
               element: element,
               isIgnored: isVarIgnored,
               isTestSupport: isTestSupport,
+              isExternalBinding:
+                  isExternalBinding ||
+                  options.frameworkAdapter.isExternalBinding(decl, element),
               isNativeRoot:
                   isNativeRoot ||
                   options.frameworkAdapter.isFrameworkEntryPoint(decl, element),
@@ -204,6 +211,10 @@ class ZombieEngine {
           final lineInfo = unitResult.lineInfo.getLocation(decl.offset);
           final element = decl.declaredFragment?.element;
           final isTestSupport = isTestSupportDeclaration(decl, name);
+          final isExternalBinding = options.frameworkAdapter.isExternalBinding(
+            decl,
+            element,
+          );
           final isNativeRoot =
               isNativeOrEntryPoint(decl) ||
               options.frameworkAdapter.isFrameworkEntryPoint(decl, element);
@@ -233,6 +244,7 @@ class ZombieEngine {
             isIgnored: isDeclIgnored,
             isTestSupport: isTestSupport,
             isSealed: isSealed,
+            isExternalBinding: isExternalBinding,
             isNativeRoot: isNativeRoot,
           );
 
@@ -490,6 +502,7 @@ class ZombieEngine {
 
       if (!isCandidate) continue;
       if (node.isIgnored) continue;
+      if (options.ignoreExternalBindings && node.isExternalBinding) continue;
       if (WildcardPattern.anyMatch(_ignoreNameWildcards, node.name)) continue;
       if (productionLive.contains(node.id)) continue;
 
@@ -526,6 +539,7 @@ class ZombieEngine {
             length: node.length,
             classification: ZombieClassification.pureZombie,
             suggestedAction: SuggestedAction.delete,
+            isExternalBinding: node.isExternalBinding,
           ),
         );
       } else {
@@ -580,6 +594,7 @@ class ZombieEngine {
               classification: ZombieClassification.coInvokedHazard,
               suggestedAction: SuggestedAction.manualRefactorHazard,
               orphanTests: orphanSites.isNotEmpty ? orphanSites : null,
+              isExternalBinding: node.isExternalBinding,
             ),
           );
         } else {
@@ -596,6 +611,7 @@ class ZombieEngine {
               classification: ZombieClassification.testedZombie,
               suggestedAction: SuggestedAction.deleteWithOrphanTests,
               orphanTests: orphanSites.isNotEmpty ? orphanSites : null,
+              isExternalBinding: node.isExternalBinding,
             ),
           );
         }

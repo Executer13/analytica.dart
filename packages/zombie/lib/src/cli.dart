@@ -73,6 +73,14 @@ ArgParser buildArgParser() {
           'companion packages to include in reachability analysis.',
       defaultsTo: '',
     )
+    ..addFlag(
+      'ignore-external-bindings',
+      aliases: ['ignore-external-interop'],
+      help:
+          'Ignore unreferenced external platform and FFI/interop facade '
+          'declarations.',
+      defaultsTo: false,
+    )
     ..addSdkPathOption()
     ..addFlag(
       'pub-get',
@@ -148,6 +156,7 @@ class ZombieCliRunner {
     final includeGenerated = results.flag('include-generated');
     final failOnZombies = results.flag('fail-on-zombies');
     final autoPubGet = results.flag('pub-get');
+    final ignoreExternalBindings = results.flag('ignore-external-bindings');
     final sdkPath = results.option('sdk-path');
     final jsonOutputPath = results.option('json-output');
     final testSupportPatterns = _parseCommaSeparated(
@@ -166,6 +175,7 @@ class ZombieCliRunner {
       includeGenerated: includeGenerated,
       failOnZombies: failOnZombies,
       autoPubGet: autoPubGet,
+      ignoreExternalBindings: ignoreExternalBindings,
       sdkPath: sdkPath,
       jsonOutputPath: jsonOutputPath,
       testSupportPatterns: testSupportPatterns,
