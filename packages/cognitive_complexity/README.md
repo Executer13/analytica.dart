@@ -55,13 +55,13 @@ void main() {
 Add automated complexity audits to `.github/workflows/complexity.yml`:
 
 ```yaml
-- uses: actions/checkout@v4
+- uses: actions/checkout@v7
   with:
     fetch-depth: 0
 
 - uses: dart-lang/setup-dart@v1
 
-- uses: kevmoo/cognitive_complexity.dart@main
+- uses: kevmoo/analytica.dart@main
   with:
     diff-base: origin/${{ github.base_ref }}
     fail-threshold: 15
@@ -87,7 +87,5 @@ Explore in-depth documentation in the [`doc/`](doc/) directory:
   delta evaluation, and exit codes.
 - 🔄 [Statement Data-Flow Analysis](doc/data_flow.md): Statement slicing,
   variable lifecycles, and automated method extraction helper.
-- 🤖 [GitHub Actions Guide](doc/github_actions.md): PR workflow setup,
-  parameters reference, and fork security permissions.
 
 [whitepaper]: https://www.sonarsource.com/docs/CognitiveComplexity.pdf
