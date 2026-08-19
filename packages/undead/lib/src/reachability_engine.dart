@@ -90,44 +90,12 @@ class UndeadEngine {
       final role = topology.roleOf(relPath);
 
       // Collect conditional imports in directives.
-      for (final directive in unitResult.unit.directives) {
-        if (directive is NamespaceDirective &&
-            directive.configurations.isNotEmpty) {
-          final targets = <String>{};
-          final defaultUri = directive.uri.stringValue;
-          if (defaultUri != null && defaultUri.isNotEmpty) {
-            final resolvedTarget = _resolveUri(
-              relPath,
-              defaultUri,
-              topology.packageName,
-            );
-            if (resolvedTarget != null) {
-              targets.add(resolvedTarget);
-            }
-          }
-          for (final config in directive.configurations) {
-            final uriStr = config.uri.stringValue;
-            if (uriStr != null && uriStr.isNotEmpty) {
-              final resolvedTarget = _resolveUri(
-                relPath,
-                uriStr,
-                topology.packageName,
-              );
-              if (resolvedTarget != null) {
-                targets.add(resolvedTarget);
-              }
-            }
-          }
-          if (targets.isNotEmpty) {
-            final allGroupFiles = {relPath, ...targets};
-            for (final file in allGroupFiles) {
-              conditionalTargets
-                  .putIfAbsent(file, () => {})
-                  .addAll(allGroupFiles.where((f) => f != file));
-            }
-          }
-        }
-      }
+      _collectConditionalImports(
+        directives: unitResult.unit.directives,
+        relPath: relPath,
+        packageName: topology.packageName,
+        conditionalTargets: conditionalTargets,
+      );
 
       // Collect file-level export directive references.
       final fileDirectivesExtractor = ElementReferenceExtractor(
@@ -327,13 +295,26 @@ class UndeadEngine {
     }
 
     // Step 2: Connect reference edges and sealed hierarchies.
+    final crossLibraryReferenced = <String>{};
+    final testReferencedIds = <String>{};
+
     for (final node in allNodes) {
+      final isTestNode =
+          topology.roleOf(node.relativeFilePath) == FileRole.test ||
+          topology.extraTestFiles.contains(node.relativeFilePath);
       final outbound = nodeOutboundElements[node];
       if (outbound != null) {
         for (final refElem in outbound) {
           final targetNode = resolveNodeForElement(refElem);
           if (targetNode != null && targetNode.id != node.id) {
             node.outgoingTargetIds.add(targetNode.id);
+            _trackEdge(
+              node,
+              targetNode,
+              isTestNode: isTestNode,
+              crossLibraryReferenced: crossLibraryReferenced,
+              testReferencedIds: testReferencedIds,
+            );
           }
         }
       }
@@ -342,8 +323,17 @@ class UndeadEngine {
       if (superElems != null) {
         for (final superElem in superElems) {
           final parentNode = resolveNodeForElement(superElem);
-          if (parentNode != null && parentNode.isSealed) {
-            sealedSubtypes.putIfAbsent(parentNode.id, () => {}).add(node.id);
+          if (parentNode != null) {
+            if (parentNode.isSealed) {
+              sealedSubtypes.putIfAbsent(parentNode.id, () => {}).add(node.id);
+            }
+            _trackEdge(
+              node,
+              parentNode,
+              isTestNode: isTestNode,
+              crossLibraryReferenced: crossLibraryReferenced,
+              testReferencedIds: testReferencedIds,
+            );
           }
         }
       }
@@ -362,6 +352,7 @@ class UndeadEngine {
       for (final sourceNode in sourceNodes) {
         for (final targetNode in targetNodes) {
           sourceNode.outgoingTargetIds.add(targetNode.id);
+          crossLibraryReferenced.add(targetNode.id);
         }
       }
     }
@@ -373,6 +364,8 @@ class UndeadEngine {
           final targetNode = resolveNodeForElement(elem);
           if (targetNode != null) {
             site.referencedDeclarationIds.add(targetNode.id);
+            testReferencedIds.add(targetNode.id);
+            crossLibraryReferenced.add(targetNode.id);
           }
         }
       }
@@ -381,6 +374,7 @@ class UndeadEngine {
     // Step 3: Identify roots for Production and Tests.
     final productionRoots = <String>{};
     final testRoots = <String>{};
+    final exportedNodeIds = <String>{};
 
     // 3.1 Public API roots (Open-World Invariant under library mode).
     if (options.mode == AnalysisMode.library) {
@@ -396,6 +390,8 @@ class UndeadEngine {
               final node = elementToNode[topLevel];
               if (node != null) {
                 productionRoots.add(node.id);
+                exportedNodeIds.add(node.id);
+                crossLibraryReferenced.add(node.id);
               }
             }
           }
@@ -405,6 +401,8 @@ class UndeadEngine {
         for (final node in allNodes) {
           if (node.relativeFilePath == relPath && !node.name.startsWith('_')) {
             productionRoots.add(node.id);
+            exportedNodeIds.add(node.id);
+            crossLibraryReferenced.add(node.id);
           }
         }
 
@@ -416,6 +414,8 @@ class UndeadEngine {
               if (node.relativeFilePath == targetRelPath &&
                   !node.name.startsWith('_')) {
                 productionRoots.add(node.id);
+                exportedNodeIds.add(node.id);
+                crossLibraryReferenced.add(node.id);
               }
             }
           }
@@ -641,6 +641,20 @@ class UndeadEngine {
       }
     }
 
+    var privateCandidates = 0;
+    if (options.suggestPrivate) {
+      final candidates = _collectPrivateCandidates(
+        allNodes: allNodes,
+        topology: topology,
+        exportedNodeIds: exportedNodeIds,
+        productionLive: productionLive,
+        crossLibraryReferenced: crossLibraryReferenced,
+        testReferencedIds: testReferencedIds,
+      );
+      privateCandidates = candidates.length;
+      findings.addAll(candidates);
+    }
+
     findings.sort((a, b) {
       final fileComp = a.file.compareTo(b.file);
       if (fileComp != 0) return fileComp;
@@ -650,15 +664,154 @@ class UndeadEngine {
     });
 
     return UndeadReport(
-      version: '0.1.0',
+      version: '0.1.1-wip',
       package: topology.packageName,
       totalDeclarations: totalDeclarationsCount,
       pureUndeadFound: pureUndead,
       testedUndeadFound: testedUndead,
       coInvokedHazardsFound: coInvokedHazards,
+      privateCandidatesFound: privateCandidates,
       undead: findings,
     );
   }
+
+  static Set<String> _extractDirectiveTargets(
+    NamespaceDirective directive,
+    String relPath,
+    String packageName,
+  ) {
+    final targets = <String>{};
+    final defaultUri = directive.uri.stringValue;
+    if (defaultUri != null && defaultUri.isNotEmpty) {
+      final resolved = _resolveUri(relPath, defaultUri, packageName);
+      if (resolved != null) {
+        targets.add(resolved);
+      }
+    }
+    for (final config in directive.configurations) {
+      final uriStr = config.uri.stringValue;
+      if (uriStr != null && uriStr.isNotEmpty) {
+        final resolved = _resolveUri(relPath, uriStr, packageName);
+        if (resolved != null) {
+          targets.add(resolved);
+        }
+      }
+    }
+    return targets;
+  }
+
+  static void _collectConditionalImports({
+    required List<Directive> directives,
+    required String relPath,
+    required String packageName,
+    required Map<String, Set<String>> conditionalTargets,
+  }) {
+    for (final directive in directives) {
+      if (directive is! NamespaceDirective ||
+          directive.configurations.isEmpty) {
+        continue;
+      }
+      final targets = _extractDirectiveTargets(directive, relPath, packageName);
+      if (targets.isEmpty) continue;
+
+      final allGroupFiles = {relPath, ...targets};
+      for (final file in allGroupFiles) {
+        conditionalTargets
+            .putIfAbsent(file, () => {})
+            .addAll(allGroupFiles.where((f) => f != file));
+      }
+    }
+  }
+
+  static bool _isCrossLibrary(DeclarationNode source, DeclarationNode target) {
+    final sourceLib = source.element?.library;
+    final targetLib = target.element?.library;
+    if (sourceLib != null && targetLib != null) {
+      return sourceLib != targetLib;
+    }
+    return source.relativeFilePath != target.relativeFilePath;
+  }
+
+  static void _trackEdge(
+    DeclarationNode source,
+    DeclarationNode target, {
+    required bool isTestNode,
+    required Set<String> crossLibraryReferenced,
+    required Set<String> testReferencedIds,
+  }) {
+    if (isTestNode) {
+      testReferencedIds.add(target.id);
+      crossLibraryReferenced.add(target.id);
+    } else if (_isCrossLibrary(source, target)) {
+      crossLibraryReferenced.add(target.id);
+    }
+  }
+
+  bool _isPrivateCandidate(
+    DeclarationNode node, {
+    required PackageTopology topology,
+    required Set<String> exportedNodeIds,
+    required Set<String> productionLive,
+    required Set<String> crossLibraryReferenced,
+    required Set<String> testReferencedIds,
+  }) {
+    final role = topology.roleOf(node.relativeFilePath);
+    final isCandidateScope = switch (role) {
+      FileRole.internalSrc => true,
+      FileRole.publicLib when options.mode == AnalysisMode.closedApp => true,
+      _ => false,
+    };
+
+    if (!isCandidateScope) return false;
+    if (node.name.startsWith('_')) return false;
+    if (node.isIgnored) return false;
+    if (node.isNativeRoot) return false;
+    if (node.isExternalBinding) return false;
+    if (node.isTestSupport) return false;
+    if (WildcardPattern.anyMatch(_ignoreNameWildcards, node.name)) return false;
+    if (WildcardPattern.anyMatch(_testSupportWildcards, node.name)) {
+      return false;
+    }
+    if (exportedNodeIds.contains(node.id)) return false;
+    if (!productionLive.contains(node.id)) return false;
+    if (crossLibraryReferenced.contains(node.id)) return false;
+    if (testReferencedIds.contains(node.id)) return false;
+    return true;
+  }
+
+  List<UndeadFinding> _collectPrivateCandidates({
+    required List<DeclarationNode> allNodes,
+    required PackageTopology topology,
+    required Set<String> exportedNodeIds,
+    required Set<String> productionLive,
+    required Set<String> crossLibraryReferenced,
+    required Set<String> testReferencedIds,
+  }) => allNodes
+      .where(
+        (node) => _isPrivateCandidate(
+          node,
+          topology: topology,
+          exportedNodeIds: exportedNodeIds,
+          productionLive: productionLive,
+          crossLibraryReferenced: crossLibraryReferenced,
+          testReferencedIds: testReferencedIds,
+        ),
+      )
+      .map(
+        (node) => UndeadFinding(
+          id: node.name,
+          name: node.name,
+          kind: node.kind,
+          file: node.relativeFilePath,
+          line: node.line,
+          column: node.column,
+          length: node.length,
+          classification: UndeadClassification.privateCandidate,
+          suggestedAction: SuggestedAction.makePrivate,
+          isExternalBinding: node.isExternalBinding,
+        ),
+      )
+      .toList();
 
   Set<String> _runBfs({
     required Set<String> startIds,
@@ -726,7 +879,7 @@ class UndeadEngine {
     return (DeclarationKind.function, false);
   }
 
-  String? _resolveUri(
+  static String? _resolveUri(
     String currentRelPath,
     String uriString,
     String packageName,
@@ -816,7 +969,28 @@ Future<UndeadReport> analyzePackage(
   String packagePath, {
   UndeadOptions? options,
 }) async {
-  final opts = options ?? UndeadOptions(packagePath: packagePath);
+  final opts = options == null
+      ? UndeadOptions(packagePath: packagePath)
+      : (options.packagePath.isEmpty
+            ? UndeadOptions(
+                packagePath: packagePath,
+                format: options.format,
+                exampleMode: options.exampleMode,
+                mode: options.mode,
+                includeGenerated: options.includeGenerated,
+                failOnUndead: options.failOnUndead,
+                autoPubGet: options.autoPubGet,
+                sdkPath: options.sdkPath,
+                jsonOutputPath: options.jsonOutputPath,
+                frameworkAdapter: options.frameworkAdapter,
+                testSupportPatterns: options.testSupportPatterns,
+                ignoreNamePatterns: options.ignoreNamePatterns,
+                extraRoots: options.extraRoots,
+                ignoreExternalBindings: options.ignoreExternalBindings,
+                workspaceDiscovery: options.workspaceDiscovery,
+                suggestPrivate: options.suggestPrivate,
+              )
+            : options);
   final engine = UndeadEngine(opts);
   return engine.analyze();
 }
