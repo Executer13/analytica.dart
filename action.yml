@@ -102,9 +102,14 @@ runs:
           if [ -f "$GITHUB_STEP_SUMMARY" ] && [ -s "$GITHUB_STEP_SUMMARY" ]; then
             echo "Searching for existing complexity audit comment on PR #$PR_NUMBER..."
             
-            # Find the ID of any existing comment containing our tracking marker
-            comment_id=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" \
-              --jq '.[] | select(.body | contains("<!-- complexity-comment-marker -->")) | .id' | head -n 1)
+            # Find the ID of any existing comment containing our tracking marker.
+            # --paginate: the endpoint returns 30 comments per page, so on a busy
+            # PR the marker falls off page one and a duplicate comment is posted.
+            # Collect before selecting: piping gh straight into `head` closes the
+            # pipe early, and SIGPIPE under `set -o pipefail` fails the step.
+            comment_ids=$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" \
+              --jq '.[] | select(.body | contains("<!-- complexity-comment-marker -->")) | .id')
+            comment_id=$(printf '%s\n' "$comment_ids" | head -n 1)
 
             if [ -n "$comment_id" ]; then
               echo "Updating existing comment (ID: $comment_id)..."
