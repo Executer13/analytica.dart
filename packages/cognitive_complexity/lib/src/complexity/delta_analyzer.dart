@@ -1,3 +1,4 @@
+import 'package:glob/glob.dart';
 import 'package:pool/pool.dart';
 import 'complexity_analyzer.dart';
 import 'git_diff_service.dart';
@@ -154,16 +155,45 @@ class DeltaAnalyzer {
     : _gitService =
           gitService ?? GitDiffService(workingDirectory: workingDirectory);
 
+  /// Glob patterns for generated sources, skipped by default.
+  ///
+  /// Generated code routinely exceeds any sensible complexity threshold and
+  /// cannot be simplified by hand, so reporting it is pure noise — and worse,
+  /// it crowds hand-written regressions out of a capped PR comment.
+  ///
+  /// 1K5 fork note: `.g.dart` and `.freezed.dart` are universal in Dart, but
+  /// `.tailor`/`.figma` are our generators. Upstreaming this means exposing it
+  /// as `--exclude` with only the first two as defaults.
+  static const defaultExcludeGlobs = [
+    '**.g.dart',
+    '**.freezed.dart',
+    '**.tailor.dart',
+    '**.figma.dart',
+    '**.figma.extension.dart',
+  ];
+
   /// Computes complexity deltas between [baseRef] and current working tree.
+  ///
+  /// Paths matching any glob in [excludeGlobs] are skipped; see
+  /// [defaultExcludeGlobs].
   Future<DeltaSummary> computeDeltas(
     String baseRef, {
     List<String> targetPaths = const [],
+    List<String> excludeGlobs = defaultExcludeGlobs,
   }) async {
     final mergeBase = await _gitService.getMergeBase(baseRef);
-    final modFiles = await _gitService.getModifiedDartFiles(
+    var modFiles = await _gitService.getModifiedDartFiles(
       mergeBase,
       targetPaths: targetPaths,
     );
+
+    if (excludeGlobs.isNotEmpty) {
+      final globs = excludeGlobs.map(Glob.new).toList();
+      modFiles = modFiles
+          .where((f) => !globs.any((g) => g.matches(f)))
+          .toList();
+    }
+
     final allDeltas = <ComplexityDelta>[];
 
     final pool = Pool(8);
