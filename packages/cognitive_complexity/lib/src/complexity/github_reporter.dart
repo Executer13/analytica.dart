@@ -138,7 +138,7 @@ class GitHubReporter {
       _emitDiagnostic(d, failThreshold, failOnIncrease);
     }
 
-    if (changed.isEmpty) {
+    if (summary.deltas.isEmpty) {
       for (final buf in [summaryBuf, ?commentBuf]) {
         buf.writeln('No modified Dart declarations detected.');
       }
