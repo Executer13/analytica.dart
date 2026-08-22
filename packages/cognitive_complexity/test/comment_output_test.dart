@@ -95,7 +95,13 @@ void main() {
           'lib',
         ],
         workingDirectory: repoPath,
-        environment: {'GITHUB_STEP_SUMMARY': summaryPath},
+        // runCli re-aligns Directory.current to GITHUB_WORKSPACE when set.
+        // On GitHub Actions that points at the (shallow) checkout, yanking
+        // the scanner out of the fixture repo — pin it to the fixture.
+        environment: {
+          'GITHUB_STEP_SUMMARY': summaryPath,
+          'GITHUB_WORKSPACE': repoPath,
+        },
       );
       // Surface scanner output when an assertion fails: without this a
       // scanner crash shows up as an opaque missing-file error.
