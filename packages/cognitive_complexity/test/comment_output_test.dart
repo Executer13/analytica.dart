@@ -82,20 +82,30 @@ void main() {
     late String commentPath;
 
     /// Runs the scanner against the fixture repo, returning the result.
-    Future<ProcessResult> runScanner(List<String> extraArgs) => Process.run(
-      Platform.resolvedExecutable,
-      [
-        binPath,
-        '--git-diff=HEAD~1',
-        '--fail-threshold=15',
-        '--fail-on-increase',
-        '--format=github',
-        ...extraArgs,
-        'lib',
-      ],
-      workingDirectory: repoPath,
-      environment: {'GITHUB_STEP_SUMMARY': summaryPath},
-    );
+    Future<ProcessResult> runScanner(List<String> extraArgs) async {
+      final res = await Process.run(
+        Platform.resolvedExecutable,
+        [
+          binPath,
+          '--git-diff=HEAD~1',
+          '--fail-threshold=15',
+          '--fail-on-increase',
+          '--format=github',
+          ...extraArgs,
+          'lib',
+        ],
+        workingDirectory: repoPath,
+        environment: {'GITHUB_STEP_SUMMARY': summaryPath},
+      );
+      // Surface scanner output when an assertion fails: without this a
+      // scanner crash shows up as an opaque missing-file error.
+      printOnFailure(
+        'scanner exit code: ${res.exitCode}\n'
+        '--- scanner stdout ---\n${res.stdout}\n'
+        '--- scanner stderr ---\n${res.stderr}',
+      );
+      return res;
+    }
 
     setUp(() async {
       repoPath = p.join(d.sandbox, 'repo');
