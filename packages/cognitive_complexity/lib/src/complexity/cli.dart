@@ -112,18 +112,13 @@ Future<int> runCli(
       'max-comment-rows',
     );
 
-    if (failOnIncrease && gitDiffBase == null) {
-      stderrSink.writeln(
-        'Warning: --fail-on-increase has no effect unless --git-diff is '
-        'specified.',
-      );
-    }
-
-    if (commentOutput != null && format != 'github') {
-      stderrSink.writeln(
-        'Warning: --comment-output has no effect unless --format=github.',
-      );
-    }
+    _warnIgnoredFlags(
+      failOnIncrease: failOnIncrease,
+      commentOutput: commentOutput,
+      format: format,
+      gitDiffBase: gitDiffBase,
+      err: stderrSink,
+    );
 
     if (gitDiffBase != null) {
       if (gitDiffBase.trim().isEmpty) {
@@ -160,6 +155,29 @@ Future<int> runCli(
   } catch (e) {
     stderrSink.writeln('Fatal error: $e');
     return 1;
+  }
+}
+
+/// Warns about flags that are silently ignored in the current mode.
+void _warnIgnoredFlags({
+  required bool failOnIncrease,
+  required String? commentOutput,
+  required String format,
+  required String? gitDiffBase,
+  required StringSink err,
+}) {
+  if (failOnIncrease && gitDiffBase == null) {
+    err.writeln(
+      'Warning: --fail-on-increase has no effect unless --git-diff is '
+      'specified.',
+    );
+  }
+
+  if (commentOutput != null && (format != 'github' || gitDiffBase == null)) {
+    err.writeln(
+      'Warning: --comment-output has no effect unless --format=github '
+      'and --git-diff are both set.',
+    );
   }
 }
 

@@ -94,11 +94,12 @@ runs:
         # When a row cap is requested, the scanner renders a second, trimmed
         # report for the PR comment while the step summary keeps every row.
         # Absolute path: the scanner runs with the action directory as cwd.
-        comment_args=""
+        # An array keeps the path intact even if RUNNER_TEMP contains spaces.
+        comment_args=()
         comment_file=""
         if [ "$INPUT_FORMAT" = "github" ] && [ "${INPUT_MAX_COMMENT_ROWS:-0}" -gt 0 ]; then
           comment_file="${RUNNER_TEMP}/complexity-comment.md"
-          comment_args="--comment-output=$comment_file --max-comment-rows=$INPUT_MAX_COMMENT_ROWS"
+          comment_args=(--comment-output="$comment_file" --max-comment-rows="$INPUT_MAX_COMMENT_ROWS")
         fi
 
         # Navigate to action repo directory, run pub get to resolve dependencies deterministically
@@ -119,7 +120,7 @@ runs:
           --format="$INPUT_FORMAT" \
           $DIFF_ARG \
           $fail_inc_arg \
-          $comment_args \
+          "${comment_args[@]}" \
           $targets
         exit_code=$?
         set -e
