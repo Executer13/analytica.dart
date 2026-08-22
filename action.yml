@@ -65,7 +65,10 @@ runs:
         fi
         echo "diff_arg=$diff_arg" >> "$GITHUB_OUTPUT"
 
+    # GitHub only shows 10 warnings + 10 errors per step in Files changed.
+    # Capture diagnostics here and replay them in later steps (still 50/job).
     - name: Execute Cognitive Complexity Scanner
+      id: scan
       shell: bash
       env:
         INPUT_THRESHOLD: ${{ inputs.threshold }}
@@ -111,7 +114,12 @@ runs:
           targets="packages"
         fi
         
-        # Execute the scanner CLI tool and capture exit code
+        # Capture stdout so this step does not consume the 10-per-level UI cap.
+        ann_dir="${RUNNER_TEMP}/complexity-annotations"
+        mkdir -p "$ann_dir"
+        : > "$ann_dir/errors.txt"
+        : > "$ann_dir/warnings.txt"
+
         set +e
         dart run cognitive_complexity \
           --threshold="$INPUT_THRESHOLD" \
@@ -120,9 +128,20 @@ runs:
           $DIFF_ARG \
           $fail_inc_arg \
           $comment_args \
-          $targets
+          $targets \
+          > "$ann_dir/stdout.txt" \
+          2> "$ann_dir/stderr.txt"
         exit_code=$?
         set -e
+
+        grep -Ev '^::(error|warning)' "$ann_dir/stderr.txt" >&2 || true
+        grep -Ev '^::(error|warning)' "$ann_dir/stdout.txt" || true
+        grep '^::error' "$ann_dir/stdout.txt" >> "$ann_dir/errors.txt" || true
+        grep '^::error' "$ann_dir/stderr.txt" >> "$ann_dir/errors.txt" || true
+        grep '^::warning' "$ann_dir/stdout.txt" >> "$ann_dir/warnings.txt" || true
+        grep '^::warning' "$ann_dir/stderr.txt" >> "$ann_dir/warnings.txt" || true
+
+        echo "scanner_exit=$exit_code" >> "$GITHUB_OUTPUT"
 
         # If running inside a PR context and GH_TOKEN is present, post or update sticky comment
         if [ -n "$PR_NUMBER" ] && [ -n "$GH_TOKEN" ]; then
@@ -155,4 +174,42 @@ runs:
           fi
         fi
 
-        exit $exit_code
+    - name: Annotate complexity errors (1-10)
+      if: ${{ always() && inputs.format == 'github' }}
+      shell: bash
+      run: |
+        f="${RUNNER_TEMP}/complexity-annotations/errors.txt"
+        [ -f "$f" ] && sed -n '1,10p' "$f" || true
+
+    - name: Annotate complexity warnings (1-10)
+      if: ${{ always() && inputs.format == 'github' }}
+      shell: bash
+      run: |
+        f="${RUNNER_TEMP}/complexity-annotations/warnings.txt"
+        [ -f "$f" ] && sed -n '1,10p' "$f" || true
+
+    - name: Annotate complexity warnings (11-20)
+      if: ${{ always() && inputs.format == 'github' }}
+      shell: bash
+      run: |
+        f="${RUNNER_TEMP}/complexity-annotations/warnings.txt"
+        [ -f "$f" ] && sed -n '11,20p' "$f" || true
+
+    - name: Annotate complexity warnings (21-30)
+      if: ${{ always() && inputs.format == 'github' }}
+      shell: bash
+      run: |
+        f="${RUNNER_TEMP}/complexity-annotations/warnings.txt"
+        [ -f "$f" ] && sed -n '21,30p' "$f" || true
+
+    - name: Annotate complexity warnings (31-40)
+      if: ${{ always() && inputs.format == 'github' }}
+      shell: bash
+      run: |
+        f="${RUNNER_TEMP}/complexity-annotations/warnings.txt"
+        [ -f "$f" ] && sed -n '31,40p' "$f" || true
+
+    - name: Fail when scanner reported findings
+      if: ${{ always() && steps.scan.outputs.scanner_exit != '0' && steps.scan.outputs.scanner_exit != '' }}
+      shell: bash
+      run: exit "${{ steps.scan.outputs.scanner_exit }}"
