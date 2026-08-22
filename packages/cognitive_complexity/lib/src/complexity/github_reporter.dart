@@ -148,33 +148,44 @@ class GitHubReporter {
     _renderDeltaTable(changed, failThreshold, failOnIncrease, summaryBuf);
 
     if (commentBuf != null) {
-      final ranked = [...changed]
-        ..sort((a, b) {
-          final byRank = _rank(
-            b,
-            failThreshold,
-            failOnIncrease,
-          ).compareTo(_rank(a, failThreshold, failOnIncrease));
-          if (byRank != 0) return byRank;
-          return (b.newScore ?? 0).compareTo(a.newScore ?? 0);
-        });
+      _renderCappedComment(changed, failThreshold, failOnIncrease, commentBuf);
+    }
+  }
 
-      final capped = _maxCommentRows > 0 && ranked.length > _maxCommentRows
-          ? ranked.sublist(0, _maxCommentRows)
-          : ranked;
+  /// Renders the sticky-comment table: most significant rows first, capped at
+  /// [_maxCommentRows], with a footer pointing at the full step summary when
+  /// rows were omitted.
+  void _renderCappedComment(
+    List<ComplexityDelta> changed,
+    int? failThreshold,
+    bool failOnIncrease,
+    StringBuffer commentBuf,
+  ) {
+    final ranked = [...changed]
+      ..sort((a, b) {
+        final byRank = _rank(
+          b,
+          failThreshold,
+          failOnIncrease,
+        ).compareTo(_rank(a, failThreshold, failOnIncrease));
+        if (byRank != 0) return byRank;
+        return (b.newScore ?? 0).compareTo(a.newScore ?? 0);
+      });
 
-      _renderDeltaTable(capped, failThreshold, failOnIncrease, commentBuf);
+    final capped = _maxCommentRows > 0 && ranked.length > _maxCommentRows
+        ? ranked.sublist(0, _maxCommentRows)
+        : ranked;
 
-      final omitted = ranked.length - capped.length;
-      if (omitted > 0) {
-        commentBuf
-          ..writeln()
-          ..writeln(
-            '_Showing the $_maxCommentRows most significant of '
-            '${ranked.length} changed declarations. '
-            'See the workflow Step Summary for the full table._',
-          );
-      }
+    _renderDeltaTable(capped, failThreshold, failOnIncrease, commentBuf);
+
+    if (capped.length < ranked.length) {
+      commentBuf
+        ..writeln()
+        ..writeln(
+          '_Showing the $_maxCommentRows most significant of '
+          '${ranked.length} changed declarations. '
+          'See the workflow Step Summary for the full table._',
+        );
     }
   }
 

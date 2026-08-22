@@ -25,6 +25,48 @@ String _decl(String name, int depth) {
       .toString();
 }
 
+Future<void> _runGit(String repoPath, List<String> args) async {
+  final res = await Process.run('git', args, workingDirectory: repoPath);
+  if (res.exitCode != 0) {
+    fail('git ${args.join(" ")} failed:\n${res.stderr}');
+  }
+}
+
+/// Creates a two-commit fixture repo at [repoPath]: six trivial declarations,
+/// then f0..f2 become violations (score 30) while f3..f5 stay under the
+/// threshold but still regress (score 7).
+Future<void> _createFixtureRepo(String repoPath) async {
+  await Directory(p.join(repoPath, 'lib')).create(recursive: true);
+
+  await _runGit(repoPath, ['init', '-b', 'main']);
+  await _runGit(repoPath, ['config', 'user.name', 'Tester']);
+  await _runGit(repoPath, ['config', 'user.email', 'test@example.com']);
+  await _runGit(repoPath, ['config', 'commit.gpgsign', 'false']);
+
+  final src = p.join(repoPath, 'lib', 'a.dart');
+
+  await File(src).writeAsString(
+    [
+      for (var i = 0; i < 6; i++) 'int f$i(int x) { return x + $i; }\n',
+    ].join('\n'),
+  );
+  await _runGit(repoPath, ['add', '.']);
+  await _runGit(repoPath, ['commit', '-m', 'base']);
+
+  await File(src).writeAsString(
+    [
+      for (var i = 0; i < 3; i++) _decl('f$i', 3),
+      for (var i = 3; i < 6; i++) _decl('f$i', 1),
+    ].join('\n'),
+  );
+  await _runGit(repoPath, ['add', '.']);
+  await _runGit(repoPath, ['commit', '-m', 'head']);
+}
+
+/// Counts markdown table rows (header rows included) in [report].
+int _tableRowCount(String report) =>
+    report.split('\n').where((l) => l.startsWith('| ')).length;
+
 void main() {
   final binPath = File('bin/cognitive_complexity.dart').existsSync()
       ? p.normalize(p.absolute('bin/cognitive_complexity.dart'))
@@ -39,14 +81,7 @@ void main() {
     late String summaryPath;
     late String commentPath;
 
-    Future<void> runGit(List<String> args) async {
-      final res = await Process.run('git', args, workingDirectory: repoPath);
-      if (res.exitCode != 0) {
-        fail('git ${args.join(" ")} failed:\n${res.stderr}');
-      }
-    }
-
-    /// Runs the scanner against the fixture repo, returning stdout.
+    /// Runs the scanner against the fixture repo, returning the result.
     Future<ProcessResult> runScanner(List<String> extraArgs) => Process.run(
       Platform.resolvedExecutable,
       [
@@ -66,35 +101,8 @@ void main() {
       repoPath = p.join(d.sandbox, 'repo');
       summaryPath = p.join(d.sandbox, 'summary.md');
       commentPath = p.join(d.sandbox, 'comment.md');
-      await Directory(p.join(repoPath, 'lib')).create(recursive: true);
       await File(summaryPath).writeAsString('');
-
-      await runGit(['init', '-b', 'main']);
-      await runGit(['config', 'user.name', 'Tester']);
-      await runGit(['config', 'user.email', 'test@example.com']);
-      await runGit(['config', 'commit.gpgsign', 'false']);
-
-      final src = p.join(repoPath, 'lib', 'a.dart');
-
-      // Base: six trivial declarations.
-      await File(src).writeAsString(
-        [
-          for (var i = 0; i < 6; i++) 'int f$i(int x) { return x + $i; }\n',
-        ].join('\n'),
-      );
-      await runGit(['add', '.']);
-      await runGit(['commit', '-m', 'base']);
-
-      // Head: f0..f2 become violations (score 30), f3..f5 stay under the
-      // threshold but still regress (score 7).
-      await File(src).writeAsString(
-        [
-          for (var i = 0; i < 3; i++) _decl('f$i', 3),
-          for (var i = 3; i < 6; i++) _decl('f$i', 1),
-        ].join('\n'),
-      );
-      await runGit(['add', '.']);
-      await runGit(['commit', '-m', 'head']);
+      await _createFixtureRepo(repoPath);
     });
 
     test('caps comment rows and keeps the full table in the step '
@@ -104,16 +112,13 @@ void main() {
         '--max-comment-rows=2',
       ]);
 
-      int rows(String s) =>
-          s.split('\n').where((l) => l.startsWith('| ')).length;
-
       final comment = await File(commentPath).readAsString();
       final summary = await File(summaryPath).readAsString();
 
       // 2 header rows + 2 capped data rows.
-      check(rows(comment)).equals(4);
+      check(_tableRowCount(comment)).equals(4);
       // 2 header rows + all 6 changed declarations.
-      check(rows(summary)).equals(8);
+      check(_tableRowCount(summary)).equals(8);
       check(comment).contains('most significant of 6 changed declarations');
     });
 
@@ -131,9 +136,7 @@ void main() {
 
       check(shown).length.equals(3);
       // Only the three violations may occupy a three-row budget.
-      for (final line in shown) {
-        check(line).contains('🔴');
-      }
+      check(shown).every((line) => line.contains('🔴'));
     });
 
     test('omits the truncation footer when everything fits', () async {
