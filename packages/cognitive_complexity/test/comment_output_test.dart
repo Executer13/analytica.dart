@@ -3,6 +3,7 @@ import 'package:checks/checks.dart';
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 import 'package:test_descriptor/test_descriptor.dart' as d;
+import 'package:test_process/test_process.dart';
 
 /// Builds a declaration whose cognitive complexity grows with [depth].
 /// depth 1 scores 7 (below a threshold of 15), depth 3 scores 30 (above it).
@@ -81,9 +82,12 @@ void main() {
     late String summaryPath;
     late String commentPath;
 
-    /// Runs the scanner against the fixture repo, returning the result.
-    Future<ProcessResult> runScanner(List<String> extraArgs) async {
-      final res = await Process.run(
+    /// Runs the scanner against the fixture repo to completion, returning
+    /// its stdout. The fixture always contains violations, so a successful
+    /// run exits 1; any other exit code (or a crash) fails the test with the
+    /// process output attached.
+    Future<String> runScanner(List<String> extraArgs) async {
+      final process = await TestProcess.start(
         Platform.resolvedExecutable,
         [
           binPath,
@@ -103,14 +107,9 @@ void main() {
           'GITHUB_WORKSPACE': repoPath,
         },
       );
-      // Surface scanner output when an assertion fails: without this a
-      // scanner crash shows up as an opaque missing-file error.
-      printOnFailure(
-        'scanner exit code: ${res.exitCode}\n'
-        '--- scanner stdout ---\n${res.stdout}\n'
-        '--- scanner stderr ---\n${res.stderr}',
-      );
-      return res;
+      final out = (await process.stdoutStream().toList()).join('\n');
+      await process.shouldExit(1);
+      return out;
     }
 
     setUp(() async {
@@ -167,12 +166,11 @@ void main() {
 
     test('annotates every changed declaration regardless of the '
         'cap', () async {
-      final res = await runScanner([
+      final out = await runScanner([
         '--comment-output=$commentPath',
         '--max-comment-rows=1',
       ]);
 
-      final out = res.stdout as String;
       // Capping the comment must not hide inline Files-changed annotations.
       check('::error'.allMatches(out).length).equals(3);
       check('::warning'.allMatches(out).length).equals(3);
