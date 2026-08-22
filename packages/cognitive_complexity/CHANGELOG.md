@@ -1,4 +1,4 @@
-## 0.3.0-wip
+## 0.2.4-wip
 
 - Add `--comment-output` and `--max-comment-rows` CLI options: with
   `--format=github`, write a second report capped to the most significant rows
